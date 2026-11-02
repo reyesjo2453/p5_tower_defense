@@ -1,13 +1,13 @@
 # Project notes for Claude Code
 
-Encore Protocol: a Persona 5 fan tower defense (vanilla JS ES modules + Canvas, no build step).
+Encore Protocol · Phantom Showcase: a Persona-inspired 3D isometric tower defense (Vite + Three.js, mobile-first).
 
-- Run: `npm start` (http://localhost:8080). Tests: `npm test`. Browser e2e: `npm run smoke`.
-- `src/sim/` is pure logic (no DOM) and is the source of truth; `src/render/` only reads `battle.events`.
-- Never add ripped/copyrighted game assets. All art/audio is procedural (see NOTICE.md, docs/ASSETS.md).
-  Character/spirit designs in `src/data/looks.js` and `src/render/personas.js` are original; keep them that way.
-- Render pipeline: scenes draw offscreen -> `src/render/post.js` (bloom/grade/grain). Battle adds a light map
-  (`src/render/lighting.js`); FX feed it via `Fx.lights()`. Static field tiles are cached per stage.
-- Adding an operator touches 5 places; `tests/data.test.js` lists what is missing (see CONTRIBUTING.md).
-- After changing numbers in `src/data/`, run `npm test` (balance guard rails).
-- `window.__game` exposes the running game for debugging/smoke tests.
+- Dev: `npm run dev` (LAN URL for phones). Tests: `npm test`. Build: `npm run build`. Browser e2e: `npm run smoke` (after build).
+- `src/sim/` is pure logic (no DOM/Three.js) and the source of truth; the view drains `game.drain()` events.
+- Never add ripped/copyrighted game assets. Models are built from primitives in `src/render/models.js`;
+  designs are original and faceless; keep them that way. Don't draw faces with SVG/canvas paths.
+- All meshes use `toon()` from `src/render/toon.js` (cel ramp + hard spec + rim) and `outline()` for ink lines;
+  glowing parts use `glowMat()` (unlit, toneMapped false) so only they bloom.
+- After changing numbers in `src/sim/data.js`, run `npm test` (balance guard rails: win with mechanics, lose without).
+- `window.__game` exposes { game, state, rig, scene, … } for debugging/smoke tests.
+- Deploy: `.github/workflows/pages.yml` (push to main or manual run; Pages source must be "GitHub Actions").

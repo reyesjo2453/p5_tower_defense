@@ -1,97 +1,57 @@
 #!/usr/bin/env node
-/* End-to-end smoke test in a real (headless) browser. Requires Playwright:
- *   npm i -D playwright && npx playwright install chromium   (once)
- *   npm run smoke [-- --shots=./shots]
- * Walks the real UI: title -> opening cutscene -> hub -> squad -> stage 1-1 -> deploy by mouse ->
- * skill cut-in -> result, failing on any console/page error. */
+/* Browser end-to-end smoke test against the production build (run `npm run build` first).
+ * Needs Playwright + Chromium:  npm i -D playwright && npx playwright install chromium
+ * Walks: title -> enter -> touch-place a unit -> start -> posture break (1-MORE) -> baton pass ->
+ * All-Out Attack cinematic -> back to play, failing on any page/console error. */
 const { spawn } = require('node:child_process');
 const path = require('node:path');
-const fs = require('node:fs');
 
-const shotsArg = process.argv.find((a) => a.startsWith('--shots='));
-const shots = shotsArg ? path.resolve(shotsArg.split('=')[1]) : null;
-if (shots) fs.mkdirSync(shots, { recursive: true });
-
-function assert(cond, msg) {
-  if (!cond) throw new Error(`SMOKE FAIL: ${msg}`);
-  console.log(`  ok  ${msg}`);
-}
+const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(`  ok  ${m}`); };
 
 (async () => {
   const { chromium } = require('playwright');
-  const port = 8100 + Math.floor(Math.random() * 500);
-  const server = spawn(process.execPath, [path.join(__dirname, 'serve.js')], { env: { ...process.env, PORT: String(port) }, stdio: 'ignore' });
-  await new Promise((r) => setTimeout(r, 800));
-  const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+  const port = 4300 + Math.floor(Math.random() * 400);
+  const vite = path.join(__dirname, '..', 'node_modules', 'vite', 'bin', 'vite.js');
+  const server = spawn(process.execPath, [vite, 'preview', '--port', String(port), '--strictPort'], { cwd: path.join(__dirname, '..'), stdio: 'ignore' });
+  await new Promise((r) => setTimeout(r, 1500));
+  const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+  const page = await browser.newPage({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true });
   const errors = [];
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   page.on('console', (m) => m.type() === 'error' && !/fonts\.g|net::ERR/.test(m.text()) && errors.push(`console: ${m.text()}`));
-  const shot = async (name) => shots && page.screenshot({ path: path.join(shots, `${name}.png`) });
-  const game = (fn, arg) => page.evaluate(fn, arg);
-
+  const G = (fn) => page.evaluate(fn);
   try {
-    await page.goto(`http://localhost:${port}/index.html`);
-    await page.waitForFunction(() => window.__game?.sceneName === 'title');
-    await shot('01-title');
-    assert(true, 'title screen loads');
-
-    await page.click('[data-act="play"]');
-    await page.waitForFunction(() => window.__game.sceneName === 'cutscene');
-    await page.waitForTimeout(1500);
-    await shot('02-opening-cinematic');
-    await page.click('[data-act="skip"]');
-    await page.waitForFunction(() => window.__game.sceneName === 'hub');
-    assert(true, 'opening cutscene plays and skips to hub');
-    await shot('03-hub');
-
-    await page.click('[data-stage="0"]');
-    await page.click('[data-act="go"]');
-    await page.waitForFunction(() => window.__game.sceneName === 'cutscene');
-    await page.waitForTimeout(500);
-    await page.click('[data-act="skip"]');
-    await page.waitForFunction(() => window.__game.sceneName === 'battle');
-    await page.waitForTimeout(600);
-    assert(true, 'stage 1-1 starts after its briefing scene');
-
-    // Deploy Joker by mouse: card -> path tile (3,2) -> face right -> click.
-    await page.evaluate(() => { window.__game.scene.battle.dp = 50; });
-    await page.mouse.move(60, 640);
-    await page.mouse.down();
-    await page.mouse.up();
-    await page.mouse.click(3 * 80 + 40, 80 + 2 * 80 + 40);
-    await page.mouse.move(3 * 80 + 90, 80 + 2 * 80 + 40);
-    await shot('04-placing');
-    await page.mouse.click(3 * 80 + 90, 80 + 2 * 80 + 40);
-    const deployed = await game(() => window.__game.scene.battle.operators.map((o) => `${o.id}@${o.c},${o.r}`));
-    assert(deployed.length === 1 && deployed[0] === 'joker@3,2', `mouse deploy works (${deployed})`);
-
-    // Skill cut-in
-    await game(() => {
-      const s = window.__game.scene;
-      const j = s.battle.operators[0];
-      j.sp = 99;
-      s.battle.spawn('shade', 'a', { x: 3.3, y: 2.5, seg: 1, travel: 3 });
+    await page.goto(`http://localhost:${port}/`);
+    await page.waitForSelector('.overlay .startbtn', { timeout: 20000 });
+    ok(true, 'title renders');
+    await page.tap('.overlay .startbtn');
+    await page.tap('[data-unit="jester"]');
+    const pt = await G(() => {
+      const w = window.__game;
+      const v = w.scene.position.clone().set(6 - 5, 0.1, 3 - 5).project(w.rig.camera);
+      return { x: ((v.x + 1) / 2) * innerWidth, y: ((1 - v.y) / 2) * innerHeight };
     });
+    await page.touchscreen.tap(pt.x, pt.y);
     await page.waitForTimeout(300);
-    await page.keyboard.press('s').catch(() => {});
-    await game(() => { const s = window.__game.scene; s.ui.selected = s.battle.operators[0]; s.useSkill(s.ui.selected); });
-    await page.waitForTimeout(600);
-    await shot('05-skill-cutin');
-    assert(await game(() => window.__game.scene.cutin.active), 'skill cut-in plays');
-    await page.waitForTimeout(2200);
-    await shot('06-skill-fx');
-
-    // Win quickly by clearing the wave list, then check the result flow.
-    await game(() => {
-      const b = window.__game.scene.battle;
-      b.spawnIdx = b.spawnList.length;
-      b.enemies.length = 0;
-    });
-    await page.waitForSelector('.result [data-act="next"]', { timeout: 8000 });
-    await shot('07-result');
-    assert(await game(() => !!window.__game.save.cleared['1-1']), 'clearing a stage is saved');
-    assert(errors.length === 0, `no console / page errors${errors.length ? `: ${errors.join(' | ')}` : ''}`);
+    ok((await G(() => window.__game.game.units.map((u) => `${u.type}@${u.x},${u.y}`).join())) === 'jester@6,3', 'touch placement on a build plate');
+    await G(() => { const g = window.__game.game; g.cash = 999; g.place('queen', 7, 6); g.place('oracle', 8, 4); });
+    await page.tap('.startbtn');
+    await page.waitForTimeout(1500);
+    ok(await G(() => window.__game.game.state === 'running' && window.__game.game.enemies.length > 0), 'wave 1 marches');
+    await G(() => { const g = window.__game.game; const e = g.enemies[0]; e.posture = 1; g.damage(g.units[0], e, 1, 5); });
+    await page.waitForSelector('.onemore', { timeout: 3000 });
+    ok(true, '1-MORE screen-slice plays on posture break');
+    ok(await G(() => window.__game.game.batonPass(window.__game.game.units[1])), 'baton pass');
+    await G(() => { const g = window.__game.game; for (let i = 0; i < 3; i++) g.breakPosture(null, g.spawn('mannequin', 'a')); });
+    await page.waitForSelector('.allout-btn', { timeout: 3000 });
+    await page.tap('.allout-btn');
+    await page.waitForSelector('.allout', { timeout: 3000 });
+    ok(true, 'ALL-OUT ATTACK comic panels');
+    await page.waitForSelector('.splash', { timeout: 15000 });
+    ok(true, 'shatter + ransom-note splash');
+    await page.waitForFunction(() => !window.__game.state.cine, null, { timeout: 30000 });
+    ok(await G(() => window.__game.game.downed.length === 0), 'downed Shadows were finished');
+    ok(errors.length === 0, `no page/console errors${errors.length ? `: ${errors.join(' | ')}` : ''}`);
     console.log('SMOKE PASSED');
   } catch (e) {
     console.error(e.message);

@@ -1,118 +1,105 @@
-# ENCORE PROTOCOL
+# ENCORE PROTOCOL · Phantom Showcase
 
-### A *Persona 5* fan tower defense · Arknights-style combat · original post-game story
+### A stylized 3D isometric tower defense in Three.js · cel-shaded · built for phones
 
 ![Title](docs/screenshots/01-title.png)
 
-> One summer after the Phantom Thieves changed the world, the trains stop. People stand frozen on the
-> platforms, smiling, mouthing four bars of a song. There is no Palace on the map, only a new layer
-> **beneath** Mementos. The Thieves go under.
-
-**Encore Protocol** is a browser tower defense where the Phantom Thieves are your operators. Deploy them
-on a grid, block and shoot "Echoes" (replays of regret), exploit elemental weaknesses to knock enemies
-**DOWN**, chain **Baton Passes**, and unleash a cinematic **All-Out Rush**, with a story that picks up
-*after* the original game.
+Shadows march down a crimson runway toward a floating golden **Treasure**. Deploy your Phantoms beside
+it, **break their posture** to shatter their gold masks, chain **1-MORE → Baton Pass**, and when three are
+down, tap the flashing prompt for an **ALL-OUT ATTACK**.
 
 | | |
 | --- | --- |
-| ![Battle](docs/screenshots/05-battle.png) | ![Skill](docs/screenshots/06-skill-cutin.png) |
-| ![Fire](docs/screenshots/07-skill-fire.png) | ![All-Out](docs/screenshots/08-all-out-rush.png) |
-| ![Maestro](docs/screenshots/02-maestro-reveal.png) | ![Hub](docs/screenshots/04-hub.png) |
-| ![Dialogue](docs/screenshots/03-dialogue.png) | ![Cast](docs/screenshots/09-cast.png) |
+| ![Battle](docs/screenshots/02-battle.png) | ![1-MORE](docs/screenshots/03-one-more.png) |
+| ![All-Out panels](docs/screenshots/04-all-out-panels.png) | ![The show's over](docs/screenshots/05-the-shows-over.png) |
+| ![Phone landscape](docs/screenshots/06-phone-landscape.png) | ![Phone portrait](docs/screenshots/07-phone-portrait.png) |
 
-> ⚠️ **Fan project.** Unofficial and non-commercial; not affiliated with ATLUS/SEGA. This repo contains **no
-> ripped game assets**. All visuals and audio are original and procedurally generated. The operators and
-> their summoned spirits use **original Encore Protocol designs** and are not recreations of the game's
-> character art. See
-> [NOTICE.md](NOTICE.md) and [docs/ASSETS.md](docs/ASSETS.md) for how to plug in art you own.
+> ⚠️ **Fan project.** This is an unofficial, non-commercial showcase inspired by the Persona series' visual
+> style. It is not affiliated with ATLUS or SEGA. It contains **no ripped or copied game assets**, and every
+> model, character design, effect and UI element is original and built in code (see [NOTICE.md](NOTICE.md)).
 
-## Play
+## Play on your phone
+
+**Option A: GitHub Pages (recommended)**
+
+1. On GitHub, go to repo **Settings → Pages**. Under **Build and deployment**, set the source to **GitHub Actions**.
+2. Merge this branch into `main`, or open **Actions → Deploy to GitHub Pages → Run workflow**.
+3. Open `https://<your-user>.github.io/p5_tower_defense/` on your phone.
+   Tip: use "Add to Home Screen" for a full-screen launch.
+
+> GitHub Pages on a **private** repo needs a paid plan (Pro/Team/Enterprise). On a free account,
+> either make the repo public or use option B.
+
+**Option B: from your computer, on the same Wi-Fi**
 
 ```bash
-git clone <this repo> && cd p5_tower_defense
-npm start            # → http://localhost:8080   (no dependencies, Node ≥ 18)
+npm install
+npm run dev          # prints a "Network:" URL such as http://192.168.1.20:5173 – open it on your phone
 ```
-
-Any static file server works too (`python3 -m http.server`); the game is plain ES modules + Canvas, no build step.
-
-## What's in the vertical slice (v0.1)
-
-- **Core TD loop**: DP economy, deploy + facing, blocking, melee-on-path / ranged-on-high-ground,
-  redeploy cooldowns, retreat refunds, 3-star ratings, 2× speed, pause, slow-motion while placing.
-- **8 operators**, each with a unique class, Persona, and **unique animated skill + full-screen cut-in**:
-
-  | Operator | Class | Skill |
-  | --- | --- | --- |
-  | Joker | Vanguard | Arsène · Eiha Rebellion |
-  | Skull | Guard | Captain Kidd · Thunder Reign |
-  | Panther | Caster | Carmen · Agneyastra |
-  | Mona | Medic | Zorro · Mediarama Gale |
-  | Fox | Sniper | Goemon · Diamond Dust |
-  | Oracle | Support | Al Azif · Full Scan |
-  | Noir | Defender | Milady · Gran Aegis |
-  | Queen | Artillery | Johanna · Atomic Overdrive |
-
-- **Persona combat language**: elemental **weakness → Stagger → DOWN**, **Baton Pass** on every skill,
-  the **Rush gauge** and **All-Out Rush**.
-- **Enemies ("Echoes")**: 4 regulars, a Conductor mini-boss that summons, and **The Maestro**, a multi-phase
-  boss with a Crescendo AoE and an **Encore** revival.
-- **Chapter 1 · REPLAY**: 3 stages, ~95 lines of original story, 4 scripted cinematics, mid-battle
-  story beats, unlock progression, save data.
-- **Presentation (v0.2 art pass)**:
-  - A post-processing pipeline with bloom, colour grading, chromatic aberration on impacts, film grain
-    and vignette.
-  - Dynamic lighting driven by units and FX.
-  - 2.5D lit battlefields with raised high ground, emissive trims, animated gates and flowing route energy.
-  - Cel-shaded character busts with rim light and expressions.
-  - Animated chibi battle tokens and light-built summoned spirits.
-  - Halftone and speed-line cut-ins, typed dialogue with camera FX, and a procedural synth soundtrack.
-- **Graphics quality**: Auto, High, Low or Off in Settings. Auto steps down by itself on slow devices.
-- **Accessibility**: reduce-flashing and screen-shake toggles, adjustable text speed, auto-advance.
 
 ## Controls
 
-| | |
-| --- | --- |
-| Deploy | Click a card (or press `1`–`6`) → click a green tile → move the mouse to aim the facing → click. Or drag a card onto the map. |
-| Select / inspect | Click a deployed operator to see range and skill. |
-| Skill | `S` or the SKILL button when SP is full (plays the cut-in) |
-| Retreat | `R` or the RETREAT button (refunds half the cost) |
-| All-Out Rush | `A` when the Rush gauge is full |
-| Pause / speed | `Space` / `F` |
-| Cancel | `Esc` or right-click |
-| Cutscenes | Click / `Space` to advance, `Esc` or SKIP to skip, AUTO to auto-advance |
+| | Touch | Mouse / keys |
+| --- | --- | --- |
+| Deploy | Drag a card onto a plate beside the runway, or tap a card then tap a plate | same |
+| Inspect / sell | Tap a deployed unit | click · `Esc` closes |
+| Baton Pass | After **1-MORE!**, tap another unit within 3 s | click |
+| All-Out Attack | Tap the flashing crimson **ALL-OUT ATTACK** prompt | `A` |
+| Speed / pause | `1×` and `❚❚` buttons | `Space` pauses |
+
+## What's in it
+
+- **Isometric 3D arena** (Three.js, WebGL):
+  - The view is fixed at 45° with a −6° Dutch tilt, and smoothly zooms in on Baton Passes.
+  - The floor is reflective obsidian (`#0A0A0E`).
+  - A raised crimson runway (`#D90429`) has emissive gold neon edges and marching chevrons.
+  - The Treasure is a floating, spinning geometric crown.
+- **Cel-shading everywhere**:
+  - `MeshToonMaterial` uses a hard 3-step ramp, plus an injected hard-cutoff specular and a sharp rim light.
+  - Meshes get inverted-hull ink outlines.
+  - Directional key and rim lights cast sharp shadows.
+- **Post-processing**:
+  - Bloom on the neon.
+  - A Ben-Day halftone shader that bites into the screen corners and the deepest shadows.
+  - Chromatic aberration on posture breaks.
+- **Phantoms** (original stylized figures, faceless by design):
+  - **Jester** (Leader): a long flared black trench coat, popped collar, a glowing white masquerade mask and twin silver blades.
+  - **Queen** (Vanguard): navy armor, metallic spiked pauldrons and crimson knuckle auras. Heavy posture damage with splash.
+  - **Oracle** (Tactician): a floating neon-green icosahedral drone pod with holographic orbital rings. Its long-range marks slow Shadows and expose their posture.
+- **Shadows**: faceless glossy obsidian mannequins in gold porcelain masks, with glowing yellow eyes and a marching walk cycle. There are four kinds, including a crowned boss.
+- **Posture Break**: an 80 ms hit-stop, then the mask **shatters into golden shards** and **black/red ink** erupts. The Shadow drops to its knees and takes ×1.5 damage.
+- **1-MORE screen-slice**: a −12° banner rips across the screen with a jagged white border, speed lines, the unit's silhouette (rendered live from its 3D model) with a glowing eye-slash, and a yellow **1-MORE!** badge.
+- **ALL-OUT ATTACK**:
+  1. The game freezes and a 3-panel comic wipe plays.
+  2. The frozen frame **shatters like glass** into a red/black splash with ransom-note **THE SHOW'S OVER** lettering.
+  3. Calling cards rain across the arena.
+- **8 waves**, including a boss wave. The difficulty is tuned so that, by test, a good build **needs** the Baton Pass / All-Out mechanics to win.
+- **Mobile-first**:
+  - Touch and drag input, a responsive HUD for portrait and landscape, and safe-area insets.
+  - Adaptive resolution that lowers the pixel ratio if frames drop.
+  - `?q=low` turns off bloom and shadows.
 
 ## Develop
 
 ```bash
-npm test             # 32 headless tests: data integrity, combat rules, every skill, balance guard rails
-npm run smoke        # real-browser end-to-end (needs: npm i -D playwright && npx playwright install chromium)
+npm install
+npm run dev        # Vite dev server (LAN-accessible)
+npm test           # 12 headless simulation tests incl. balance guard rails
+npm run build      # production build -> dist/
+npm run smoke      # browser e2e against the build (needs: npm i -D playwright && npx playwright install chromium)
 ```
-
-Docs:
-
-- [docs/DESIGN.md](docs/DESIGN.md): mechanics, damage model, classes, Echoes, architecture
-- [docs/STORY_BIBLE.md](docs/STORY_BIBLE.md): premise, themes, original cast, chapter beats, hook
-- [docs/ASSETS.md](docs/ASSETS.md): legal policy + how to bring your own art
-- [docs/ROADMAP.md](docs/ROADMAP.md): path from vertical slice toward "AAA" polish
-- [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md), [NOTICE.md](NOTICE.md)
 
 ```
 src/
-  sim/      pure deterministic combat (no DOM), the testable source of truth
-  render/   canvas: field, characters, personas, skill FX, cut-ins, cinematics
-  scenes/   title · hub/squad · battle (input + HUD) · cutscene player · roster · settings
-  data/     operators, enemies, stages, story script, procedural "looks"
-  core/     WebAudio synth, save data, asset override loader, math utils
+  sim/      pure deterministic game logic (no DOM / Three.js): board, units, enemies, waves, posture, baton, all-out
+  render/   Three.js: toon materials + outlines, arena, models, FX pools, camera rig, post-processing
+  ui/       DOM HUD, comic cut-ins (1-MORE, ALL-OUT shatter), 3D-silhouette portraits, CSS
+  main.js   renderer setup, input, game loop, cut-in orchestration
 ```
 
-## Honest status
-
-This is a **vertical slice**, not a finished AAA game. The mechanics, UX, animation systems and story
-structure are in place and tested. The v0.2 art pass gave everything a lit, post-processed, cel-shaded look,
-but all of it is still drawn in code. Hand-painted illustration and keyframed animation would be the next
-step up; the asset-override system and the [roadmap](docs/ROADMAP.md) are the path there.
+See [docs/DESIGN.md](docs/DESIGN.md) for rules and rendering details, and [docs/ROADMAP.md](docs/ROADMAP.md) for what's next.
+The previous 2D canvas version (v0.2) lives in git history at commit `64bc6fb`.
 
 ---
 
-*Persona is a trademark of ATLUS. This is an unofficial fan work released under the MIT license for its original code and writing.*
+*Persona is a trademark of ATLUS. This is an unofficial fan work. Code is MIT-licensed.*

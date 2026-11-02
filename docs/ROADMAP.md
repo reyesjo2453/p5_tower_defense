@@ -1,29 +1,17 @@
 # Roadmap
 
-## Done (v0.1: vertical slice)
-- [x] Core TD loop, 8 operators, 6 Echo types, 3 stages, boss with revive
-- [x] Unique animated skills, cut-ins, All-Out Rush, Baton Pass
-- [x] Chapter 1 story, 4 cinematics, mid-battle story beats
-- [x] Procedural art/audio, save data, settings (incl. reduce-flash), tests, CI
+## Done (v1.0: 3D showcase)
+- [x] Vite + Three.js rebuild, isometric camera with Dutch tilt and Baton zoom
+- [x] Cel-shaded toon materials (hard specular + rim), ink outlines, reflective obsidian floor, neon runway
+- [x] Bloom + Ben-Day halftone post-processing
+- [x] Jester / Queen / Oracle, four Shadow types incl. boss, posture break with hit-stop, shards and ink
+- [x] 1-MORE screen-slice, Baton Pass, ALL-OUT ATTACK (comic panels → glass shatter → ransom splash → calling cards)
+- [x] Mobile touch/drag, responsive HUD, adaptive resolution, GitHub Pages deploy workflow
 
-## Next: polish toward "AAA"
-- [x] Rendering pass: bloom, grading, dynamic lighting, 2.5D lit fields, cel-shaded original character designs
-- [ ] Illustrated art pass: commissioned/owned portraits and sprites via `manifest.json`
-- [ ] Skeletal animation (Spine/DragonBones) for tokens and attack/idle/skill poses
-- [ ] Voice acting hooks + subtitles in the cutscene player
-- [ ] Full music score (stems per scene, stinger on All-Out)
-- [ ] Per-operator unique attack animations and hit-stop
-- [ ] Mobile layout and touch drag-to-deploy polish
-- [ ] Localization (strings already isolated in `data/story.js`)
-
-## Content
-- [ ] Chapter 2: *Requests* (Akechi echo, Sae, Sojiro) with 5+ stages
-- [ ] More operators (Akechi as a late-game guest, Sumire, new original Thieves)
-- [ ] Persona fusion-style upgrades: skill levels, potential, operator trust ("confidant") levels
-- [ ] Enemy variety: flyers, stealth, support Echoes; environmental hazards
-- [ ] Challenge modes, daily operations, endless "Mementos Depth" mode
-
-## Tech
-- [ ] Replay/recording from deterministic sim seeds
-- [ ] Data-driven stage editor
-- [ ] Bundled/minified release build, PWA
+## Next
+- [ ] Unit upgrades (two tiers each) and a skill button per unit
+- [ ] More stages and runway layouts; endless "Encore" mode
+- [ ] Audio: acid-jazz loop + hit/break/all-out stingers (WebAudio)
+- [ ] Skinned/animated glTF models (Blender) to replace the primitive figures
+- [ ] Save data, settings menu (quality, shake, reduced motion), haptics on mobile
+- [ ] PWA manifest + offline cache

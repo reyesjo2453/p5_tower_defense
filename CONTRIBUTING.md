@@ -1,22 +1,12 @@
-# Contributing / Developing
+# Contributing
 
-```bash
-npm start          # http://localhost:8080  (zero-dependency static server)
-npm test           # 32+ headless tests (Node >= 18)
-npm run smoke      # real-browser end-to-end (needs: npm i -D playwright && npx playwright install chromium)
-```
-
-## Ground rules
-
-1. **No ripped assets.** See [NOTICE.md](NOTICE.md) and [docs/ASSETS.md](docs/ASSETS.md).
-2. Keep `src/sim/` free of DOM/canvas imports: it must run in Node for tests.
-3. New operator = data entry in `src/data/operators.js` + look in `src/data/looks.js` + skill handler in
-   `src/sim/skills.js` + animation in `src/render/skillfx.js` + summoned-spirit design in
-   `src/render/personas.js`. `tests/data.test.js` fails until every piece exists.
-4. New story scene = add to `src/data/story.js` and reference it from a stage (`scenes` / `triggers`).
-5. Changing numbers? Run `npm test`. The balance tests protect "winnable" and "not trivially winnable".
-6. Accessibility: anything flashing must respect `settings.reduceFlash`; shake must respect `screenShake`.
-
-## Layout
-
-See the architecture section in [docs/DESIGN.md](docs/DESIGN.md).
+1. `npm install`, then `npm run dev`. Open the printed Network URL on a phone to test touch.
+2. Keep `src/sim` free of DOM and Three.js. Add a test in `tests/sim.test.js` for any rule change.
+3. To add a unit:
+   - add a data entry in `src/sim/data.js` `UNITS`;
+   - add a builder in `src/render/models.js` and register it in `BUILDERS`;
+   - add attack animation and FX in `src/render/view.js` (`onEvent('attack')` and `update`);
+   - add a card accent in `src/ui/style.css`.
+4. New meshes use `toon()` and `outline()`, and glowing bits use `glowMat()`. Instance anything numerous.
+5. Before a PR, run `npm test && npm run build`. If you have Playwright, also run `npm run smoke`.
+6. No ripped or copyrighted assets, and original designs only (see docs/ASSETS.md).

@@ -1,310 +1,211 @@
-// Turns sim events into short-lived visual effects and draws them.
-import { TAU, hexA, easeOutCubic, clamp, mulberry32 } from '../core/util.js';
-import { text, starburst, lightning, glow, W } from './draw.js';
-import { px, py, TILE } from './layout.js';
-import { ELEMENTS } from '../data/operators.js';
-import { SKILL_FX } from './skillfx.js';
+// Pooled 3D effects: golden mask shards, black/red ink eruptions, blade slashes, knuckle shockwaves,
+// drone beams, hit sparks and fluttering calling cards. Everything is instanced for mobile GPUs.
+import * as THREE from 'three';
+import { toon, glowMat } from './toon.js';
+import { cardTexture } from './models.js';
 
-const SKILL_LIGHT = {
-  arsene_eiha: '#ff2a4a', kidd_thunder: '#ffe933', carmen_agneyastra: '#ff7a2a', zorro_mediarama: '#6dff9c',
-  goemon_diamond: '#7fe3ff', alazif_scan: '#ff9f1c', milady_aegis: '#ff7bb0', anat_atomic: '#c58bff', anat_impact: '#d6a6ff',
-};
+const _m = new THREE.Matrix4();
+const _q = new THREE.Quaternion();
+const _e = new THREE.Euler();
+const _s = new THREE.Vector3();
+const _p = new THREE.Vector3();
+const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 
-export class Fx {
-  constructor(settings) {
-    this.list = [];
-    this.shake = 0;
-    this.flash = 0;
-    this.flashColor = '#fff';
-    this.settings = settings;
-    this.seed = 1;
+class Pool {
+  constructor(scene, geo, mat, max) {
+    this.mesh = new THREE.InstancedMesh(geo, mat, max);
+    this.mesh.frustumCulled = false;
+    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    for (let i = 0; i < max; i++) this.mesh.setMatrixAt(i, ZERO);
+    scene.add(this.mesh);
+    this.items = [];
+    this.max = max;
+    this.colors = null;
   }
 
-  add(e) {
-    e.age = 0;
-    this.list.push(e);
-    return e;
+  spawn(o) {
+    if (this.items.length >= this.max) this.items.shift();
+    o.age = 0;
+    this.items.push(o);
+    return o;
   }
 
-  doShake(a) {
-    if (this.settings.screenShake) this.shake = Math.max(this.shake, a);
-  }
-
-  doFlash(a, color = '#fff') {
-    if (this.settings.reduceFlash) a *= 0.25;
-    this.flash = Math.max(this.flash, a);
-    this.flashColor = color;
-  }
-
-  handle(ev) {
-    switch (ev.t) {
-      case 'deploy':
-        this.add({ type: 'puff', x: px(ev.x), y: py(ev.y), dur: 0.5, color: '#ffffff' });
-        break;
-      case 'retreat':
-        this.add({ type: 'puff', x: px(ev.x), y: py(ev.y), dur: 0.4, color: '#7fe3ff' });
-        break;
-      case 'shot': {
-        const color = ELEMENTS[ev.element]?.color || '#fff';
-        const a = { x: px(ev.from.x), y: py(ev.from.y) - 14 };
-        const b = { x: px(ev.to.x), y: py(ev.to.y) - 20 };
-        if (ev.kind === 'melee') this.add({ type: 'slash', x: b.x, y: b.y, dur: 0.22, color, rot: Math.atan2(b.y - a.y, b.x - a.x) });
-        else if (ev.kind === 'heal') this.add({ type: 'heal', a, b, dur: 0.5, color: '#9dffc0' });
-        else this.add({ type: 'bolt', a, b, dur: 0.16, color, big: ev.big });
-        break;
-      }
-      case 'estrike': {
-        const a = { x: px(ev.from.x), y: py(ev.from.y) - 20 };
-        const b = { x: px(ev.to.x), y: py(ev.to.y) - 20 };
-        if (ev.ranged) this.add({ type: 'bolt', a, b, dur: 0.2, color: ev.color });
-        else this.add({ type: 'slash', x: b.x, y: b.y, dur: 0.2, color: ev.color, rot: Math.atan2(b.y - a.y, b.x - a.x) + Math.PI });
-        break;
-      }
-      case 'chain': {
-        const pts = ev.points.map((p) => ({ x: px(p.x), y: py(p.y) - 20 }));
-        this.add({ type: 'chain', pts, dur: 0.3, color: '#ffe933' });
-        break;
-      }
-      case 'dmg': {
-        const color = ev.op ? '#ff6f6f' : ev.weak ? '#ffe933' : ev.resist ? '#8a8a9a' : '#fff';
-        this.add({ type: 'num', x: px(ev.x) + (Math.random() - 0.5) * 20, y: py(ev.y) - 40, v: ev.v, dur: 0.8, color, big: ev.weak || ev.down, weak: ev.weak });
-        if (ev.weak) this.add({ type: 'burst', x: px(ev.x), y: py(ev.y) - 20, dur: 0.3, color: ELEMENTS[ev.element]?.color || '#fff' });
-        break;
-      }
-      case 'heal':
-        this.add({ type: 'num', x: px(ev.x), y: py(ev.y) - 50, v: `+${ev.v}`, dur: 0.8, color: '#7dff9c' });
-        break;
-      case 'down':
-        this.add({ type: 'text', x: px(ev.x), y: py(ev.y) - 70, str: 'DOWN!', dur: 1.2, color: '#ffe933', size: ev.boss ? 64 : 46 });
-        this.doShake(ev.boss ? 8 : 4);
-        break;
-      case 'kill':
-        this.add({ type: 'death', x: px(ev.x), y: py(ev.y), dur: 0.6, boss: ev.boss });
-        if (ev.boss) { this.doShake(14); this.doFlash(0.6); }
-        break;
-      case 'oplost':
-        this.add({ type: 'text', x: px(ev.x), y: py(ev.y) - 70, str: 'DOWN', dur: 1, color: '#ff3b5c', size: 40 });
-        this.add({ type: 'puff', x: px(ev.x), y: py(ev.y), dur: 0.5, color: '#ff3b5c' });
-        break;
-      case 'leak':
-        this.doShake(10);
-        this.doFlash(0.45, '#ff1a3c');
-        this.add({ type: 'text', x: px(ev.x) - 60, y: py(ev.y), str: `-${ev.cost}`, dur: 1.2, color: '#ff3b5c', size: 60 });
-        break;
-      case 'phase':
-        this.add({ type: 'text', x: px(ev.x), y: py(ev.y) - 120, str: ev.text, dur: 1.6, color: ev.color || '#fff', size: 70 });
-        if (ev.ring) this.add({ type: 'ring', x: px(ev.x), y: py(ev.y), r: ev.ring * TILE, dur: 0.8, color: ev.color });
-        this.doShake(9);
-        break;
-      case 'baton':
-        for (const t of ev.to) this.add({ type: 'baton', a: { x: px(ev.from.x), y: py(ev.from.y) - 20 }, b: { x: px(t.x), y: py(t.y) - 20 }, dur: 0.9 });
-        this.add({ type: 'text', x: px(ev.from.x), y: py(ev.from.y) - 90, str: 'BATON PASS', dur: 1.1, color: '#ff5577', size: 30 });
-        break;
-      case 'spawn':
-        this.add({ type: 'puff', x: px(ev.x), y: py(ev.y), dur: 0.5, color: ev.boss ? '#ffd24a' : '#b36bff' });
-        break;
-      case 'skill': {
-        const def = SKILL_FX[ev.id];
-        if (!def) break;
-        const e = {
-          type: 'skill', id: ev.id, dur: def.dur, x: px(ev.x), y: py(ev.y) - 10, dir: ev.dir, color: '#fff',
-          targets: (ev.targets || []).map((t) => ({ x: px(t.x), y: py(t.y) - 20 })),
-          allies: (ev.allies || []).map((t) => ({ x: px(t.x), y: py(t.y) - 20 })),
-          center: ev.center ? { x: px(ev.center.x), y: py(ev.center.y) } : null,
-          radius: (ev.radius || 1.5) * TILE,
-        };
-        this.add(e);
-        this.doShake(ev.id === 'milady_aegis' ? 12 : 6);
-        break;
-      }
-      case 'impact':
-        this.add({ type: 'skill', id: 'anat_impact', dur: SKILL_FX.anat_impact.dur, x: px(ev.x), y: py(ev.y), targets: [], radius: ev.radius * TILE });
-        this.doShake(20);
-        break;
-      default:
+  update(dt, fn) {
+    this.items = this.items.filter((it) => (it.age += dt) < it.life);
+    let i = 0;
+    for (const it of this.items) {
+      fn(it, dt);
+      _e.set(it.rx || 0, it.ry || 0, it.rz || 0);
+      _q.setFromEuler(_e);
+      const k = it.scaleFn ? it.scaleFn(it.age / it.life) : 1;
+      _s.set((it.sx ?? it.s ?? 1) * k, (it.sy ?? it.s ?? 1) * k, (it.sz ?? it.s ?? 1) * k);
+      _p.set(it.x, it.y, it.z);
+      _m.compose(_p, _q, _s);
+      this.mesh.setMatrixAt(i, _m);
+      if (this.colors && it.color) this.mesh.setColorAt(i, it.color);
+      i++;
     }
-  }
-
-  update(dt) {
-    for (const e of this.list) e.age += dt;
-    this.list = this.list.filter((e) => e.age < e.dur);
-    this.shake = Math.max(0, this.shake - dt * 30);
-    this.flash = Math.max(0, this.flash - dt * 3);
-  }
-
-  /** Feed transient light sources (impacts, bolts, skills) into the battle light map. */
-  lights(lm) {
-    for (const e of this.list) {
-      const k = clamp(e.age / e.dur, 0, 1);
-      const f = 1 - k;
-      switch (e.type) {
-        case 'bolt':
-          lm.add(e.b.x, e.b.y, e.big ? 150 : 90, e.color, 0.9 * f);
-          lm.add(e.a.x, e.a.y, 70, e.color, 0.6 * f);
-          break;
-        case 'slash':
-        case 'burst':
-          lm.add(e.x, e.y, 110, e.color, 0.9 * f);
-          break;
-        case 'chain':
-          for (const p of e.pts) lm.add(p.x, p.y, 90, e.color, 0.8 * f);
-          break;
-        case 'heal':
-          lm.add(e.b.x, e.b.y, 90, e.color, 0.7 * f);
-          break;
-        case 'death':
-          lm.add(e.x, e.y - 20, e.boss ? 320 : 140, '#ff9fd0', 1.1 * f);
-          break;
-        case 'ring':
-          lm.add(e.x, e.y, e.r * 1.2, e.color || '#fff', 0.8 * f);
-          break;
-        case 'puff':
-          lm.add(e.x, e.y, 90, e.color, 0.5 * f);
-          break;
-        case 'skill': {
-          const col = SKILL_LIGHT[e.id] || '#ffffff';
-          const r = Math.max(160, (e.radius || 100) * 1.4);
-          lm.add(e.center ? e.center.x : e.x, e.center ? e.center.y : e.y, r, col, 1.2 * Math.sin(Math.min(1, k * 1.2) * Math.PI));
-          for (const tg of e.targets || []) lm.add(tg.x, tg.y, 100, col, 0.8 * Math.sin(k * Math.PI));
-          break;
-        }
-        default:
-      }
-    }
-  }
-
-  draw(ctx, t) {
-    for (const e of this.list) {
-      const k = clamp(e.age / e.dur, 0, 1);
-      ctx.save();
-      switch (e.type) {
-        case 'puff':
-          for (let i = 0; i < 8; i++) {
-            const a = (i / 8) * TAU + 0.4;
-            const d = easeOutCubic(k) * 46;
-            ctx.fillStyle = hexA(e.color, 1 - k);
-            ctx.beginPath();
-            ctx.arc(e.x + Math.cos(a) * d, e.y + Math.sin(a) * d * 0.6, 6 * (1 - k) + 1, 0, TAU);
-            ctx.fill();
-          }
-          ctx.strokeStyle = hexA(e.color, 1 - k);
-          ctx.lineWidth = 4 * (1 - k);
-          ctx.beginPath();
-          ctx.ellipse(e.x, e.y + 12, 18 + 40 * k, (18 + 40 * k) * 0.45, 0, 0, TAU);
-          ctx.stroke();
-          break;
-        case 'slash':
-          ctx.translate(e.x, e.y);
-          ctx.rotate(e.rot);
-          ctx.strokeStyle = hexA(e.color, 1 - k);
-          ctx.shadowColor = e.color;
-          ctx.shadowBlur = 12;
-          ctx.lineWidth = 7 * (1 - k) + 1;
-          ctx.lineCap = 'round';
-          ctx.beginPath();
-          ctx.arc(-6, 0, 30 + k * 12, -0.9, 0.9);
-          ctx.stroke();
-          break;
-        case 'bolt': {
-          const q = easeOutCubic(Math.min(1, k * 2.2));
-          const hx = e.a.x + (e.b.x - e.a.x) * q;
-          const hy = e.a.y + (e.b.y - e.a.y) * q;
-          ctx.strokeStyle = hexA(e.color, 1 - k);
-          ctx.lineWidth = e.big ? 7 : 3.5;
-          ctx.shadowColor = e.color;
-          ctx.shadowBlur = 14;
-          ctx.lineCap = 'round';
-          ctx.beginPath();
-          ctx.moveTo(e.a.x + (hx - e.a.x) * Math.max(0, k * 1.6 - 0.6), e.a.y + (hy - e.a.y) * Math.max(0, k * 1.6 - 0.6));
-          ctx.lineTo(hx, hy);
-          ctx.stroke();
-          if (k > 0.45) {
-            ctx.fillStyle = hexA(e.color, 1 - k);
-            ctx.beginPath();
-            ctx.arc(e.b.x, e.b.y, (e.big ? 26 : 12) * (k - 0.2), 0, TAU);
-            ctx.fill();
-          }
-          break;
-        }
-        case 'chain':
-          for (let i = 0; i < e.pts.length - 1; i++) {
-            ctx.globalAlpha = 1 - k;
-            lightning(ctx, e.pts[i].x, e.pts[i].y, e.pts[i + 1].x, e.pts[i + 1].y, e.color, 3, Math.floor(e.age * 40) + i);
-          }
-          break;
-        case 'heal':
-          for (let i = 0; i < 5; i++) {
-            const q = clamp(k * 1.3 - i * 0.1, 0, 1);
-            ctx.fillStyle = hexA(e.color, 1 - q);
-            ctx.fillRect(e.a.x + (e.b.x - e.a.x) * q - 3, e.a.y + (e.b.y - e.a.y) * q - 3 - Math.sin(q * 6) * 10, 7, 7);
-          }
-          break;
-        case 'baton': {
-          const q = easeOutCubic(Math.min(1, k * 1.5));
-          ctx.strokeStyle = hexA('#ff5577', 1 - k);
-          ctx.lineWidth = 5;
-          ctx.setLineDash([14, 8]);
-          ctx.beginPath();
-          ctx.moveTo(e.a.x, e.a.y);
-          ctx.lineTo(e.a.x + (e.b.x - e.a.x) * q, e.a.y + (e.b.y - e.a.y) * q);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.fillStyle = hexA('#fff', 1 - k);
-          ctx.beginPath();
-          ctx.arc(e.a.x + (e.b.x - e.a.x) * q, e.a.y + (e.b.y - e.a.y) * q, 9, 0, TAU);
-          ctx.fill();
-          break;
-        }
-        case 'num': {
-          const rise = easeOutCubic(k) * 40;
-          const sz = (e.big ? 40 : 28) * (k < 0.15 ? 1 + (0.15 - k) * 3 : 1);
-          ctx.globalAlpha = 1 - clamp((k - 0.6) / 0.4, 0, 1);
-          text(ctx, String(e.v), e.x, e.y - rise, { size: sz, fill: e.color, stroke: '#000', lw: 6, align: 'center', skew: e.weak ? -0.25 : 0 });
-          if (e.weak) text(ctx, 'WEAK', e.x, e.y - rise - sz, { size: 18, fill: '#ff5577', stroke: '#000', lw: 4, align: 'center' });
-          break;
-        }
-        case 'text': {
-          const pop = easeOutCubic(clamp(k * 5, 0, 1));
-          ctx.globalAlpha = 1 - clamp((k - 0.7) / 0.3, 0, 1);
-          ctx.translate(e.x, e.y - k * 30);
-          ctx.rotate(-0.06);
-          ctx.scale(0.5 + pop * 0.5, 0.5 + pop * 0.5);
-          text(ctx, e.str, 0, 0, { size: e.size, fill: e.color, stroke: '#000', lw: e.size / 5, align: 'center', skew: -0.2 });
-          break;
-        }
-        case 'burst':
-          starburst(ctx, e.x, e.y, 8 + k * 14, 26 + k * 24, 8, k * 2, hexA(e.color, 1 - k));
-          ctx.fill();
-          break;
-        case 'ring':
-          ctx.strokeStyle = hexA(e.color, 1 - k);
-          ctx.lineWidth = 10 * (1 - k);
-          ctx.beginPath();
-          ctx.arc(e.x, e.y, e.r * easeOutCubic(k), 0, TAU);
-          ctx.stroke();
-          break;
-        case 'death': {
-          const rng = mulberry32(Math.floor(e.x + e.y));
-          const n = e.boss ? 40 : 14;
-          for (let i = 0; i < n; i++) {
-            const a = rng() * TAU;
-            const d = easeOutCubic(k) * (30 + rng() * (e.boss ? 160 : 60));
-            ctx.fillStyle = hexA(i % 3 ? '#b36bff' : '#ffffff', 1 - k);
-            ctx.fillRect(e.x + Math.cos(a) * d, e.y - 24 + Math.sin(a) * d, 5, 5);
-          }
-          if (e.boss) glow(ctx, e.x, e.y, 200 * k, '#ffd24a', 1 - k);
-          break;
-        }
-        case 'skill': {
-          const def = SKILL_FX[e.id];
-          def.draw(ctx, e, k, t);
-          break;
-        }
-        default:
-      }
-      ctx.restore();
-    }
+    for (; i < this.max; i++) this.mesh.setMatrixAt(i, ZERO);
+    this.mesh.instanceMatrix.needsUpdate = true;
+    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
   }
 }
 
-export const _W = W;
+export class Fx {
+  constructor(scene) {
+    this.scene = scene;
+    this.shards = new Pool(scene, new THREE.TetrahedronGeometry(0.06), toon(0xffc93a, { spec: 2, shininess: 120, rim: 1, emissive: 0x302000 }), 260);
+    const inkMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    this.ink = new Pool(scene, new THREE.IcosahedronGeometry(0.05, 0), inkMat, 420);
+    this.ink.colors = true;
+    this.ink.mesh.setColorAt(0, new THREE.Color(0));
+    this.sparks = new Pool(scene, new THREE.OctahedronGeometry(0.03), glowMat(0xfff2c0, 3), 220);
+    this.cards = new Pool(scene, new THREE.PlaneGeometry(0.22, 0.33), new THREE.MeshBasicMaterial({ map: cardTexture(), side: THREE.DoubleSide }), 140);
+    this.transient = []; // meshes with their own lifetime (slashes, rings, beams)
+    this.slashGeo = new THREE.TorusGeometry(0.42, 0.025, 4, 32, Math.PI * 1.1);
+    this.ringGeo = new THREE.TorusGeometry(0.3, 0.035, 6, 40);
+    this.beamGeo = new THREE.CylinderGeometry(0.025, 0.025, 1, 6, 1, true);
+    this.beamGeo.rotateX(Math.PI / 2);
+    this.beamGeo.translate(0, 0, 0.5);
+    this.inkBlack = new THREE.Color(0x050505);
+    this.inkRed = new THREE.Color(0xc4001f);
+  }
+
+  // ---------------------------------------------------------------- emitters
+  burstSparks(p, n = 8, color) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const v = 1.5 + Math.random() * 2.5;
+      this.sparks.spawn({ x: p.x, y: p.y, z: p.z, vx: Math.cos(a) * v, vy: 1 + Math.random() * 2.5, vz: Math.sin(a) * v, life: 0.35 + Math.random() * 0.2, s: 1, scaleFn: (k) => 1 - k, color });
+    }
+  }
+
+  /** Posture break: the gold porcelain mask shatters, black/red ink erupts. */
+  shatter(p) {
+    for (let i = 0; i < 26; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const v = 1.2 + Math.random() * 2.8;
+      this.shards.spawn({ x: p.x, y: p.y, z: p.z, vx: Math.cos(a) * v, vy: 2 + Math.random() * 3, vz: Math.sin(a) * v, rx: Math.random() * 6, ry: Math.random() * 6, rz: 0, wr: (Math.random() - 0.5) * 20, life: 1.1 + Math.random() * 0.5, s: 0.7 + Math.random() * 1.1, bounce: true });
+    }
+    for (let i = 0; i < 46; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const v = 0.6 + Math.random() * 2.4;
+      const red = Math.random() < 0.38;
+      this.ink.spawn({ x: p.x, y: p.y - 0.2, z: p.z, vx: Math.cos(a) * v, vy: 1.5 + Math.random() * 4, vz: Math.sin(a) * v, life: 0.7 + Math.random() * 0.6, s: 0.8 + Math.random() * 2.2, color: red ? this.inkRed : this.inkBlack, scaleFn: (k) => (k < 0.15 ? k / 0.15 : 1 - (k - 0.15) * 0.9), drag: 1.5 });
+    }
+    this.ring(p, 0xffc93a, 1.8, 0.35);
+  }
+
+  /** Death puff: ink only. */
+  inkBurst(p, n = 22) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const v = 0.4 + Math.random() * 1.6;
+      this.ink.spawn({ x: p.x, y: p.y, z: p.z, vx: Math.cos(a) * v, vy: 0.8 + Math.random() * 2.5, vz: Math.sin(a) * v, life: 0.5 + Math.random() * 0.4, s: 0.8 + Math.random() * 1.5, color: Math.random() < 0.25 ? this.inkRed : this.inkBlack, scaleFn: (k) => 1 - k, drag: 2 });
+    }
+  }
+
+  cardsRain(n = 90, spread = 7) {
+    for (let i = 0; i < n; i++) {
+      this.cards.spawn({
+        x: (Math.random() - 0.5) * spread * 2, y: 4 + Math.random() * 5, z: (Math.random() - 0.5) * spread * 2,
+        vx: (Math.random() - 0.5) * 1.5, vy: -1.2 - Math.random() * 1.5, vz: (Math.random() - 0.5) * 1.5,
+        rx: Math.random() * 6, ry: Math.random() * 6, rz: Math.random() * 6, wr: 3 + Math.random() * 5,
+        life: 3.5 + Math.random() * 2.5, s: 1, flutter: Math.random() * 10, land: true,
+      });
+    }
+  }
+
+  slash(p, angle, color = 0xffffff) {
+    const m = new THREE.Mesh(this.slashGeo, glowMat(color, 3, { transparent: true, opacity: 1, additive: true, depthWrite: false }));
+    m.position.copy(p);
+    m.rotation.set(-Math.PI / 2 + (Math.random() - 0.5) * 0.8, 0, -angle + Math.PI * 0.45);
+    this.transient.push({ mesh: m, age: 0, life: 0.2, kind: 'slash' });
+    this.scene.add(m);
+  }
+
+  ring(p, color, maxScale = 2, life = 0.3) {
+    const m = new THREE.Mesh(this.ringGeo, glowMat(color, 2.5, { transparent: true, opacity: 1, additive: true, depthWrite: false }));
+    m.position.copy(p);
+    m.rotation.x = Math.PI / 2;
+    this.transient.push({ mesh: m, age: 0, life, kind: 'ring', maxScale });
+    this.scene.add(m);
+  }
+
+  beam(from, to, color = 0x39ff88) {
+    const m = new THREE.Mesh(this.beamGeo, glowMat(color, 3, { transparent: true, opacity: 1, additive: true, depthWrite: false }));
+    m.position.copy(from);
+    m.lookAt(to);
+    m.scale.set(1, 1, from.distanceTo(to));
+    this.transient.push({ mesh: m, age: 0, life: 0.18, kind: 'beam' });
+    this.scene.add(m);
+  }
+
+  // ---------------------------------------------------------------- update
+  update(dt) {
+    const g = 9;
+    this.shards.update(dt, (it) => {
+      it.vy -= g * dt;
+      it.x += it.vx * dt;
+      it.y += it.vy * dt;
+      it.z += it.vz * dt;
+      if (it.y < 0.05 && it.bounce) {
+        it.y = 0.05;
+        it.vy *= -0.35;
+        it.vx *= 0.6;
+        it.vz *= 0.6;
+      }
+      it.rx += it.wr * dt;
+      it.ry += it.wr * 0.7 * dt;
+    });
+    this.ink.update(dt, (it) => {
+      it.vy -= g * 0.6 * dt;
+      const d = Math.exp(-it.drag * dt);
+      it.vx *= d;
+      it.vz *= d;
+      it.x += it.vx * dt;
+      it.y = Math.max(0.04, it.y + it.vy * dt);
+      it.z += it.vz * dt;
+    });
+    this.sparks.update(dt, (it) => {
+      it.vy -= g * 0.5 * dt;
+      it.x += it.vx * dt;
+      it.y += it.vy * dt;
+      it.z += it.vz * dt;
+    });
+    this.cards.update(dt, (it) => {
+      it.flutter += dt * 4;
+      if (it.y > 0.03) {
+        it.x += (it.vx + Math.sin(it.flutter) * 0.8) * dt;
+        it.y += it.vy * dt;
+        it.z += (it.vz + Math.cos(it.flutter * 0.8) * 0.8) * dt;
+        it.rx += it.wr * dt;
+        it.rz += it.wr * 0.6 * dt;
+      } else {
+        it.y = 0.03;
+        it.rx = -Math.PI / 2;
+        it.ry = 0;
+      }
+    });
+    this.transient = this.transient.filter((tr) => {
+      tr.age += dt;
+      const k = tr.age / tr.life;
+      if (k >= 1) {
+        this.scene.remove(tr.mesh);
+        tr.mesh.material.dispose();
+        return false;
+      }
+      if (tr.kind === 'slash') {
+        tr.mesh.scale.setScalar(0.8 + k * 0.5);
+        tr.mesh.material.opacity = 1 - k;
+      } else if (tr.kind === 'ring') {
+        tr.mesh.scale.setScalar(0.3 + k * tr.maxScale);
+        tr.mesh.material.opacity = 1 - k;
+      } else if (tr.kind === 'beam') {
+        tr.mesh.material.opacity = 1 - k;
+        tr.mesh.scale.x = tr.mesh.scale.y = 1 + k * 2;
+      }
+      return true;
+    });
+  }
+}

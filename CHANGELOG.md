@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.0 – 3D Phantom Showcase (Three.js rebuild)
+
+- Replaced the 2D canvas game with a Vite + Three.js isometric 3D tower defense built for phones. The
+  2D version stays in git history at `64bc6fb`.
+- Cel-shading: toon ramp, hard specular, sharp rim light and inverted-hull outlines. Also a reflective
+  obsidian floor, crimson runway with gold neon edges, spinning crown Treasure, bloom and a halftone shader.
+- Jester, Queen and Oracle (original stylized figures), plus four Shadow types including a boss.
+- Posture break with 80 ms hit-stop, mask shatter into gold shards and an ink eruption.
+- 1-MORE screen-slice, Baton Pass with camera punch-in, and an ALL-OUT ATTACK cinematic (3-panel comic
+  wipe, glass shatter, ransom-note splash, calling-card rain).
+- Touch/drag controls, responsive HUD, adaptive resolution, and GitHub Pages deploy plus CI workflows.
+- 12 simulation tests (including balance guard rails) and a mobile-viewport browser smoke test.
+
 ## 0.2.0 – Art & rendering pass
 
 - **Post-processing pipeline** (`src/render/post.js`): every scene renders offscreen, then gets bloom
