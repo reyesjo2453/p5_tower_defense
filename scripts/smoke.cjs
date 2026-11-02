@@ -25,6 +25,8 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
     await page.waitForSelector('.overlay .startbtn', { timeout: 20000 });
     ok(true, 'title renders');
     await page.tap('.overlay .startbtn');
+    await page.waitForFunction(() => window.__game.rig.est === 0, null, { timeout: 20000 });
+    ok(true, 'establishing shot glides into the battle camera');
     await page.tap('[data-unit="jester"]');
     const pt = await G(() => {
       const w = window.__game;

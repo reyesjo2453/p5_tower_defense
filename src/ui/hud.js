@@ -1,6 +1,7 @@
 // DOM HUD + comic overlays. Pure presentation: the main loop calls update() every frame and the
 // cut-in methods return Promises so the game can freeze while they play.
 import { UNITS } from '../sim/data.js';
+import { burstClip, starURL, splatterURL, speedlinesURL, tornClip, tornClipV, rng } from './comic.js';
 
 const $ = (html) => {
   const t = document.createElement('template');
@@ -8,6 +9,23 @@ const $ = (html) => {
   return t.content.firstElementChild;
 };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// jagged comic-card outline shared by the deploy cards (white frame + inset ink face)
+const JAG = 'polygon(0% 4%, 9% 0%, 21% 3%, 37% 0%, 55% 3%, 71% 0%, 88% 2%, 100% 0%, 97% 18%, 100% 37%, 96% 58%, 100% 79%, 98% 100%, 83% 96%, 66% 100%, 47% 97%, 30% 100%, 13% 96%, 0% 100%, 3% 80%, 0% 60%, 4% 39%, 0% 20%)';
+const BURST = burstClip(12, 0.64, 9);
+// one-time generated comic textures
+const TEX = {
+  speedOne: speedlinesURL({ w: 900, h: 220, fx: 0.24, fy: 0.55, n: 90, seed: 11 }),
+  speedPanel: speedlinesURL({ w: 300, h: 700, fx: 0.5, fy: 0.42, n: 64, ink: '#050505', accent: '#fff', seed: 12, inner: 0.12 }),
+  speedPanelK: speedlinesURL({ w: 300, h: 700, fx: 0.5, fy: 0.42, n: 64, ink: '#e8002d', accent: '#fff', seed: 13, inner: 0.12 }),
+  speedSplash: speedlinesURL({ w: 1000, h: 700, fx: 0.3, fy: 0.55, n: 120, ink: '#050505', accent: '#fff', seed: 14, inner: 0.1 }),
+  torn: tornClip(21, 9, 40),
+  tornBack: tornClip(22, 5, 40),
+  tornV: [0, 1, 2].map((i) => tornClipV(31 + i, 7, 24)),
+  stars: [0, 1, 2, 3, 4].map((i) => starURL(40 + i, i % 2 ? ['#fff', '#ffe600'] : ['#ffe600', '#fff'])),
+  inkK: [0, 1, 2].map((i) => splatterURL('#050505', 50 + i)),
+  inkR: [0, 1].map((i) => splatterURL('#a8001f', 60 + i)),
+};
 
 export class Hud {
   constructor(root, portraits, handlers) {
@@ -27,7 +45,7 @@ export class Hud {
         <div class="chip treasure"><span><span class="ico">♛</span> <span class="lbl">TREASURE</span></span><div class="tbar"><i data-k="tbar" style="width:100%"></i></div></div>
       </div>
       <div class="hud-right">
-        <div class="chip"><span>¥ <b data-k="cash">0</b></span></div>
+        <div class="chip cash"><span><i class="yen" style="clip-path:${BURST}">¥</i><b data-k="cash">0</b></span></div>
         <button class="iconbtn live" data-act="speed"><span>1×</span></button>
         <button class="iconbtn live" data-act="pause"><span>❚❚</span></button>
       </div>
@@ -36,8 +54,10 @@ export class Hud {
     this.deck = $('<div class="deck"></div>');
     for (const def of Object.values(UNITS)) {
       const c = $(`<button class="card accent-${def.id}" data-unit="${def.id}">
-        ${this.portraits[def.id] ? `<img alt="" src="${this.portraits[def.id]}">` : ''}
-        <span class="nm">${def.name}</span><span class="role">${def.role.toUpperCase()}</span><span class="cost">${def.cost}</span>
+        <span class="frame" style="clip-path:${JAG}"></span>
+        <span class="face" style="clip-path:${JAG}">${this.portraits[def.id] ? `<img alt="" src="${this.portraits[def.id]}">` : ''}</span>
+        <span class="nm">${def.name.toUpperCase()}</span><span class="role">${def.role.toUpperCase()}</span>
+        <span class="cost"><i class="bk" style="clip-path:${BURST}"></i><i class="bg" style="clip-path:${BURST}"></i><b><small>¥</small>${def.cost}</b></span>
       </button>`);
       c.addEventListener('pointerdown', (e) => {
         e.preventDefault();
@@ -130,14 +150,19 @@ export class Hud {
   async oneMore(unitId, chain) {
     this.root.querySelector('.onemore')?.remove();
     const el = $(`<div class="onemore">
-      <div class="border"></div><div class="band"></div><div class="lines"></div>
+      <div class="back" style="clip-path:${TEX.tornBack}"></div>
+      <div class="band" style="clip-path:${TEX.torn}">
+        <div class="ben"></div>
+        <div class="lines" style="background-image:url(&quot;${TEX.speedOne}&quot;)"></div>
+      </div>
       ${this.portraits[unitId] ? `<img class="sil" alt="" src="${this.portraits[unitId]}">` : ''}
       <div class="slash"></div>
-      <div class="badge">1-MORE!</div>
+      <img class="star" alt="" src="${TEX.stars[0]}">
+      <div class="badge">1 MORE!</div>
       <div class="sub">${chain > 1 ? `CHAIN ×${chain} · ` : ''}BATON READY</div>
     </div>`);
     this.root.appendChild(el);
-    await wait(850);
+    await wait(900);
     el.classList.add('out');
     await wait(350);
     el.remove();
@@ -154,13 +179,16 @@ export class Hud {
     this.allOutBtn = null;
     const ids = ['jester', 'queen', 'oracle'];
     const el = $(`<div class="allout">
-      ${ids.map((id) => `<div class="panel">${this.portraits[id] ? `<img alt="" src="${this.portraits[id]}">` : ''}<div class="lbl">${UNITS[id].name}</div></div>`).join('')}
+      ${ids.map((id, i) => `<div class="panel" style="clip-path:${TEX.tornV[i]}"><div class="in" style="clip-path:${TEX.tornV[i]}">
+        <div class="sp" style="background-image:url(&quot;${i === 1 ? TEX.speedPanelK : TEX.speedPanel}&quot;)"></div>
+        ${this.portraits[id] ? `<img alt="" src="${this.portraits[id]}">` : ''}<div class="lbl">${UNITS[id].name.toUpperCase()}</div></div></div>`).join('')}
       <div class="title">ALL-OUT ATTACK</div>
     </div>`);
     this.root.appendChild(el);
     await wait(1600);
     // shatter the frozen frame (comic panels + arena) into shards that fly apart over the splash
-    const splash = $(`<div class="splash"></div>`);
+    const splash = $(`<div class="splash"><div class="sp" style="background-image:url(&quot;${TEX.speedSplash}&quot;)"></div></div>`);
+    splash.appendChild(splashArt(this.portraits.leader));
     const words = "THE SHOW'S OVER".split(' ');
     const ransom = $('<div class="ransom"></div>');
     let n = 0;
@@ -196,6 +224,39 @@ export class Hud {
     this.root.appendChild(el);
     return el;
   }
+}
+
+/** Hero + comic accents for THE SHOW'S OVER: accent cuts, ink, stars, the leader, fluttering cards. */
+function splashArt(heroURL) {
+  const r = rng(77);
+  const art = document.createElement('div');
+  art.className = 'art';
+  let html = '';
+  // bold yellow / white accent cuts slicing across behind everything
+  const cuts = [[18, -16, 'y', 22], [34, -18, 'w', 9], [62, -14, 'y', 12], [80, -20, 'w', 26], [90, -15, 'y', 7]];
+  cuts.forEach(([top, rot, c, hgt], i) => {
+    html += `<i class="cut ${c}" style="top:${top}%;height:${hgt}px;transform:rotate(${rot}deg);animation-delay:${0.05 + i * 0.06}s"></i>`;
+  });
+  // ink splatters
+  const inks = [[6, 8, 'K', 0, 34], [70, 70, 'K', 1, 30], [44, 2, 'R', 0, 26], [84, 6, 'K', 2, 22], [20, 72, 'R', 1, 28], [56, 40, 'K', 0, 14]];
+  inks.forEach(([x, y, k, n, sz], i) => {
+    const src = k === 'K' ? TEX.inkK[n] : TEX.inkR[n];
+    html += `<img class="ink" alt="" src="${src}" style="left:${x}%;top:${y}%;width:${sz}vmin;animation-delay:${0.1 + i * 0.05}s;--r:${Math.floor(r() * 360)}deg">`;
+  });
+  // the hero
+  if (heroURL) html += `<img class="hero" alt="" src="${heroURL}">`;
+  // exploding comic stars around the title and the hero
+  const stars = [[52, 18, 26, 0], [86, 58, 22, 1], [30, 62, 16, 2], [62, 76, 18, 3], [12, 28, 13, 4], [94, 22, 12, 1]];
+  stars.forEach(([x, y, sz, n], i) => {
+    html += `<img class="star" alt="" src="${TEX.stars[n]}" style="left:${x}%;top:${y}%;width:${sz}vmin;animation-delay:${0.15 + i * 0.07}s;--r:${Math.floor(r() * 60 - 30)}deg">`;
+  });
+  // fluttering black-and-red calling cards
+  for (let i = 0; i < 18; i++) {
+    const red = i % 3 === 0;
+    html += `<i class="ccard${red ? ' red' : ''}" style="left:${(r() * 100).toFixed(1)}%;--d:${(1.6 + r() * 1.6).toFixed(2)}s;--dl:${(r() * 0.9).toFixed(2)}s;--sx:${(r() * 160 - 80).toFixed(0)}px;--rz:${(r() * 720 - 360).toFixed(0)}deg;--s:${(0.7 + r() * 0.7).toFixed(2)}"></i>`;
+  }
+  art.innerHTML = html;
+  return art;
 }
 
 /** Draw the frozen arena plus a crude red/black panel impression into one canvas. */

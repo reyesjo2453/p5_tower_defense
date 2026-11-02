@@ -1,7 +1,6 @@
 // The isometric arena: reflective obsidian floor, raised crimson runway with gold neon edges,
 // treasure dais, build-slot markers and the lighting rig.
 import * as THREE from 'three';
-import { Reflector } from 'three/addons/objects/Reflector.js';
 import { GRID, CENTER } from '../sim/data.js';
 import { toon, glowMat, shadows } from './toon.js';
 import { buildCrown } from './models.js';
@@ -19,17 +18,7 @@ export function buildArena(scene, board, { quality = 'high' } = {}) {
   scene.add(group);
   const half = GRID / 2;
 
-  // --- reflective floor: a Reflector under a semi-transparent obsidian tile layer
-  if (quality === 'high') {
-    const mirror = new Reflector(new THREE.PlaneGeometry(GRID + 6, GRID + 6), {
-      textureWidth: Math.min(1024, window.innerWidth * window.devicePixelRatio * 0.5),
-      textureHeight: Math.min(1024, window.innerHeight * window.devicePixelRatio * 0.5),
-      color: 0x22222a,
-    });
-    mirror.rotation.x = -Math.PI / 2;
-    mirror.position.y = -0.002;
-    group.add(mirror);
-  }
+  // --- the play area: semi-transparent obsidian tiles over the Palace mirror floor (see palace.js)
   const tileMat = toon(0x0a0a0e, { spec: 1.4, shininess: 220, rim: 0, transparent: quality === 'high', opacity: quality === 'high' ? 0.78 : 1 });
   const tileGeo = new THREE.BoxGeometry(0.96, 0.04, 0.96);
   const tiles = new THREE.InstancedMesh(tileGeo, tileMat, (GRID + 4) * (GRID + 4));
@@ -156,10 +145,10 @@ export function buildArena(scene, board, { quality = 'high' } = {}) {
   key.position.set(-6, 12, 4);
   key.castShadow = quality !== 'low';
   key.shadow.mapSize.set(1024, 1024);
-  key.shadow.camera.left = -half - 2;
-  key.shadow.camera.right = half + 2;
-  key.shadow.camera.top = half + 2;
-  key.shadow.camera.bottom = -half - 2;
+  key.shadow.camera.left = -half - 4.5;
+  key.shadow.camera.right = half + 4.5;
+  key.shadow.camera.top = half + 4.5;
+  key.shadow.camera.bottom = -half - 4.5;
   key.shadow.bias = -0.0015;
   scene.add(key);
   const rimR = new THREE.DirectionalLight(0xff2a4a, 1.6);

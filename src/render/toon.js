@@ -20,11 +20,11 @@ const cache = new Map();
 
 /**
  * @param {string|number} color
- * @param {object} o  { spec 0..2, shininess, rim 0..2, rimColor, emissive, emissiveIntensity, transparent, opacity, side }
+ * @param {object} o  { map, spec 0..2, shininess, rim 0..2, rimColor, emissive, emissiveIntensity, transparent, opacity, side }
  */
 export function toon(color, o = {}) {
-  const key = JSON.stringify([color, o]);
-  if (cache.has(key) && !o.unique) return cache.get(key);
+  const key = o.unique || o.map ? null : JSON.stringify([color, o]);
+  if (key && cache.has(key)) return cache.get(key);
   const m = new THREE.MeshToonMaterial({
     color,
     gradientMap: gradientMap(),
@@ -33,6 +33,7 @@ export function toon(color, o = {}) {
     transparent: !!o.transparent,
     opacity: o.opacity ?? 1,
     side: o.side ?? THREE.FrontSide,
+    map: o.map ?? null,
   });
   const spec = o.spec ?? 0.6;
   const shin = o.shininess ?? 60;
@@ -67,7 +68,7 @@ export function toon(color, o = {}) {
       );
   };
   m.customProgramCacheKey = () => `toon-${spec}-${shin}-${rim}`;
-  if (!o.unique) cache.set(key, m);
+  if (key) cache.set(key, m);
   return m;
 }
 

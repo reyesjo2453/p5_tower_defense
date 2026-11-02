@@ -1,66 +1,138 @@
 // Scene graph <-> simulation sync: models for units/enemies, animation, bars, FX dispatch,
-// and the isometric camera rig (45deg view, -6deg Dutch roll, Baton Pass zoom).
+// and the camera rig (close (0, 9, 8) framing, -6deg Dutch roll, spring punch-ins with a -8deg tilt).
 import * as THREE from 'three';
 import { BUILDERS, buildShadow } from './models.js';
 import { world, RUNWAY_H, SLOT_H } from './arena.js';
-import { GRID } from '../sim/data.js';
 
-const DUTCH = THREE.MathUtils.degToRad(-6);
-const AZIMUTH = THREE.MathUtils.degToRad(45);
-const ELEVATION = THREE.MathUtils.degToRad(45);
+const DUTCH = THREE.MathUtils.degToRad(-6); // resting Dutch roll
+const PUNCH_DUTCH = THREE.MathUtils.degToRad(-8); // roll while a strike punch-in holds
+const DIR = new THREE.Vector3(0, 9, 8).normalize(); // default camera at (0, 9, 8) looking at the origin
+const BASE_DIST = Math.hypot(9, 8);
+const FOV_MIN = 34;
+const FOV_MAX = 56;
+// what must stay on screen: every build slot (x +-5.6, z +-4.6) plus figure height at the back
+const FIT_PTS = [];
+for (const x of [-5.6, 5.6]) for (const z of [-4.6, 4.6]) for (const y of [0, 1.4]) FIT_PTS.push(new THREE.Vector3(x, y, z));
+
+// critically-damped-ish spring step (k stiffness, c damping)
+function spring(x, v, goal, k, c, dt) {
+  const a = (goal - x) * k - v * c;
+  v += a * dt;
+  return [x + v * dt, v];
+}
 
 export class CameraRig {
   constructor(camera) {
     this.camera = camera;
-    this.target = new THREE.Vector3();
     this.focus = new THREE.Vector3();
-    this.zoom = 1; // 1 = whole board, <1 = closer
-    this.zoomGoal = 1;
     this.focusGoal = new THREE.Vector3();
+    this.zoom = 1; // 1 = framing distance, <1 = punched in
+    this.zoomV = 0;
+    this.zoomGoal = 1;
+    this.roll = DUTCH;
+    this.rollV = 0;
+    this.rollGoal = DUTCH;
     this.hold = 0;
     this.shake = 0;
-    this.baseDist = 20;
+    this.baseDist = BASE_DIST;
+    this.since = 99;
+    this._probe = new THREE.PerspectiveCamera();
+    // establishing shot (title / results): a low drifting angle that shows off the Palace skyline.
+    // est = 1 fully establishing, 0 = gameplay framing; blended with an eased slerp.
+    this.est = 1;
+    this.estGoal = 1;
+    this.time = 0;
+    this.fitFov = 0;
+    this._estCam = new THREE.PerspectiveCamera(); // a camera so lookAt() aims down -Z
+    this._gp = new THREE.Vector3();
+    this._gq = new THREE.Quaternion();
   }
 
   /**
-   * Fit the board into the free screen area between the top HUD and the bottom deck.
-   * w/h = canvas CSS size, top/bottom = reserved CSS px.
+   * Frame the board in the free screen area between the top HUD and the bottom deck. The camera stays
+   * at its close default (0, 9, 8); the FOV widens to fit narrow screens, and only past FOV_MAX does
+   * the camera back off. w/h = canvas CSS size, top/bottom = reserved CSS px.
    */
   fit(w, h, top = 60, bottom = 130) {
     const cam = this.camera;
     const freeH = Math.max(120, h - top - bottom);
-    const tanV = Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2);
-    // projected half-extents of the iso diamond (board + a margin for figures)
-    const halfW = GRID * 0.7;
-    const halfH = GRID * 0.38;
-    const distV = halfH / (tanV * (freeH / h));
-    const distH = halfW / (tanV * (w / h));
-    this.baseDist = Math.max(distV, distH);
-    // shift the image so the board centres in the free area
-    cam.setViewOffset(w, h, 0, (bottom - top) / 2, w, h);
+    const limY = (freeH / h) * 0.96;
+    const limX = 0.95;
+    const probe = this._probe;
+    probe.aspect = w / h;
+    const fits = (fov, dist) => {
+      probe.fov = fov;
+      probe.position.copy(DIR).multiplyScalar(dist);
+      probe.lookAt(0, 0, 0);
+      probe.updateMatrixWorld();
+      probe.updateProjectionMatrix();
+      let minY = Infinity;
+      let maxY = -Infinity;
+      for (const p of FIT_PTS) {
+        const n = p.clone().project(probe);
+        if (Math.abs(n.x) > limX) return false;
+        minY = Math.min(minY, n.y);
+        maxY = Math.max(maxY, n.y);
+      }
+      // vertical: the projected span has to fit in the free band (we recentre it with a view offset)
+      return maxY - minY <= 2 * limY;
+    };
+    let fov = FOV_MIN;
+    let dist = BASE_DIST;
+    while (fov < FOV_MAX && !fits(fov, dist)) fov += 1;
+    while (!fits(fov, dist) && dist < 60) dist += 0.5;
+    cam.fov = fov;
+    this.fitFov = fov;
+    this.baseDist = dist;
+    // centre the projected board in the free band: find its NDC midpoint and shift the view
+    probe.fov = fov;
+    probe.position.copy(DIR).multiplyScalar(dist);
+    probe.lookAt(0, 0, 0);
+    probe.updateMatrixWorld();
+    probe.updateProjectionMatrix();
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const p of FIT_PTS) {
+      const n = p.clone().project(probe);
+      minY = Math.min(minY, n.y);
+      maxY = Math.max(maxY, n.y);
+    }
+    const midNdc = (minY + maxY) / 2; // where the board's centre lands now
+    const freeMidPx = top + freeH / 2; // where we want it (CSS px from the top)
+    const nowPx = (1 - midNdc) * 0.5 * h;
+    cam.setViewOffset(w, h, 0, nowPx - freeMidPx, w, h);
     cam.updateProjectionMatrix();
   }
 
-  punch(p, zoom = 0.55, hold = 1.3) {
+  /** Strike punch-in: zoom toward p, roll to the -8 deg Dutch angle, then ease back after `hold` s. */
+  punch(p, zoom = 0.6, hold = 1.0, gap = 0) {
+    if (this.since < gap) return; // rate-limit automatic punch-ins so rapid breaks don't seasick
+    this.since = 0;
     this.focusGoal.copy(p);
     this.zoomGoal = zoom;
-    this.hold = hold;
+    this.rollGoal = PUNCH_DUTCH;
+    this.rollV -= 0.9; // kick past the target so the tilt lands with a snap
+    this.zoomV -= 0.8;
+    this.hold = Math.max(this.hold, hold);
   }
 
   update(dt) {
+    if (dt <= 0) return;
+    this.since += dt;
     if (this.hold > 0) {
       this.hold -= dt;
       if (this.hold <= 0) {
         this.zoomGoal = 1;
+        this.rollGoal = DUTCH;
         this.focusGoal.set(0, 0, 0);
       }
     }
-    const k = 1 - Math.exp(-dt * 6);
-    this.zoom += (this.zoomGoal - this.zoom) * k;
-    this.focus.lerp(this.focusGoal, k);
+    const h = Math.min(dt, 1 / 30);
+    [this.zoom, this.zoomV] = spring(this.zoom, this.zoomV, this.zoomGoal, 70, 13, h);
+    [this.roll, this.rollV] = spring(this.roll, this.rollV, this.rollGoal, 90, 12, h);
+    this.focus.lerp(this.focusGoal, 1 - Math.exp(-dt * 7));
     const d = this.baseDist * this.zoom;
-    const dir = new THREE.Vector3(Math.sin(AZIMUTH) * Math.cos(ELEVATION), Math.sin(ELEVATION), Math.cos(AZIMUTH) * Math.cos(ELEVATION));
-    this.camera.position.copy(this.focus).addScaledVector(dir, d);
+    this.camera.position.copy(this.focus).addScaledVector(DIR, d);
     if (this.shake > 0) {
       this.shake = Math.max(0, this.shake - dt * 3);
       const s = this.shake * 0.25;
@@ -68,7 +140,27 @@ export class CameraRig {
       this.camera.position.y += (Math.random() - 0.5) * s;
     }
     this.camera.lookAt(this.focus);
-    this.camera.rotateZ(DUTCH);
+    this.camera.rotateZ(this.roll);
+    // blend toward / away from the establishing shot
+    this.time += dt;
+    this.est = Math.min(1, Math.max(0, this.est + Math.sign(this.estGoal - this.est) * dt / 1.8));
+    if (this.est > 0.0001) {
+      const e = this.est * this.est * (3 - 2 * this.est);
+      const a = Math.sin(this.time * 0.13) * 0.55;
+      const ec = this._estCam;
+      ec.position.set(Math.sin(a) * 15.5, 6.2 + Math.sin(this.time * 0.21) * 0.6, Math.cos(a) * 15.5);
+      ec.lookAt(Math.sin(a) * -3, 3.4, -14);
+      ec.rotateZ(DUTCH);
+      this._gp.copy(this.camera.position);
+      this._gq.copy(this.camera.quaternion);
+      this.camera.position.lerpVectors(this._gp, ec.position, e);
+      this.camera.quaternion.slerpQuaternions(this._gq, ec.quaternion, e);
+    }
+    const fov = this.fitFov + (52 - this.fitFov) * (this.est * this.est * (3 - 2 * this.est));
+    if (this.fitFov && Math.abs(fov - this.camera.fov) > 1e-3) {
+      this.camera.fov = fov;
+      this.camera.updateProjectionMatrix();
+    }
   }
 }
 
@@ -192,6 +284,7 @@ export class View {
         if (!v) break;
         const head = v.model.parts.head.getWorldPosition(new THREE.Vector3());
         this.fx.shatter(head);
+        this.rig.punch(v.model.root.position.clone().setY(0.6), ev.enemy.def.boss ? 0.7 : 0.66, 0.75, 2.2);
         v.model.parts.mask.visible = false;
         v.maskOff = true;
         this.rig.shake = Math.max(this.rig.shake, ev.enemy.def.boss ? 1.4 : 0.6);
@@ -209,7 +302,7 @@ export class View {
       case 'baton': {
         const v = this.units.get(ev.to.uid);
         if (v) {
-          this.rig.punch(v.base.clone().setY(0.4), 0.5, 1.4);
+          this.rig.punch(v.base.clone().setY(0.4), 0.55, 1.3);
           this.fx.ring(v.base.clone().setY(0.15), 0xff2a6a, 2.5, 0.5);
           this.fx.burstSparks(v.base.clone().setY(1), 20, new THREE.Color(0xff6a9a));
         }

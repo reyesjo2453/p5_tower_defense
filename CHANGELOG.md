@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.1.0 – Palace & comic art overhaul
+
+- **Palace environment**:
+  - A velvet `FogExp2` haze over a mirror-glossy marble checkerboard to the horizon, with a neon circuit matrix.
+  - A neon skyline with gothic spires, giant wireframe roulette wheels, and hanging golden chains.
+  - Gothic balustrades, pointed neon archways, and floating dice and calling cards.
+- **Camera**:
+  - Closer battle camera at (0, 9, 8) with an adaptive FOV.
+  - Spring punch-in zoom with a −8° Dutch snap on 1-MORE and on Baton Pass.
+  - An establishing shot of the Palace on the title and results screens.
+- **Silhouettes**: hand-authored angular SVG silhouettes (Jester, Queen, Oracle, and a full-body leader hero) replace the 3D-render portraits.
+- **1-MORE**: a torn-paper band with Ben-Day dots, converging speedlines and a burst-star badge.
+- **ALL-OUT ATTACK**:
+  - The panels get torn edges and speedlines.
+  - The splash adds the leader hero, accent cuts, ink splatters, comic stars and fluttering calling cards.
+- **HUD**:
+  - Deploy cards are skewed −6° with jagged frames and yellow ¥ burst badges.
+  - Bold slanted all-caps typography.
+
 ## 1.0.0 – 3D Phantom Showcase (Three.js rebuild)
 
 - Replaced the 2D canvas game with a Vite + Three.js isometric 3D tower defense built for phones. The

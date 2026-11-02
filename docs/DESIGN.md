@@ -44,9 +44,22 @@ Re-run `npm test` after touching `src/sim/data.js`.
 
 ## Rendering (src/render)
 
-- **Camera**: perspective, fov 30 (34 in portrait), 45° azimuth and elevation, then a −6° roll. The board
-  is fitted to the free area between the HUD and the deck with `setViewOffset`. On a Baton Pass, `CameraRig.punch()`
-  eases the camera toward the receiver for about 1.4 s.
+- **Camera** (`CameraRig` in `view.js`): the default position is (0, 9, 8) looking at the origin with a −6° roll.
+  `fit()` keeps that distance and widens the FOV (34–56°) until every build plate fits the free band between
+  the HUD and the deck. Only past 56° does the camera back off. `setViewOffset` recentres the board in that
+  band. `punch()` (1-MORE on the broken Shadow, rate-limited to one per 2.2 s, and the Baton receiver) drives the
+  zoom and roll with springs, kicking past the −8° punch tilt so it lands with a snap. `est` blends to a low drifting
+  establishing shot (title and results), including its own FOV.
+- **Palace** (`palace.js`):
+  - Sky: a gradient dome.
+  - Floor: a 240 m `Reflector` under a translucent marble checkerboard (canvas texture), plus a neon circuit matrix of `LineSegments`.
+  - Skyline: about 90 instanced towers with additive window textures, neon bands, gothic spires and antennas.
+  - Three wireframe roulette wheels drawn in vertex-coloured lines.
+  - Instanced golden chain links along catenaries and drops.
+  - Instanced lathe balusters with merged rails, posts and neon finials.
+  - Instanced pointed neon archways.
+  - Floating dice (6 face textures) and calling cards.
+  - The far backdrop skips the `FogExp2(0.025)` haze, which would otherwise swallow anything past about 50 m, so it reads as neon silhouettes against the horizon glow.
 - **Toon materials** (`toon.js`): `MeshToonMaterial` with a 3-step `NearestFilter` ramp. `onBeforeCompile`
   injects, per directional light, a hard-edged Blinn specular (`smoothstep(0.45, 0.5, …)`) and a sharp
   lit-side rim (`smoothstep(0.62, 0.66, 1 − N·V)`). Ink outlines are inverted hulls (back faces offset along
@@ -61,11 +74,15 @@ Re-run `npm test` after touching `src/sim/data.js`.
   pixels, plus a slight crimson grade, vignette, flash and chromatic aberration.
 - **FX** (`fx.js`): instanced pools for gold shards (they bounce), ink droplets (black or red per instance),
   sparks and calling cards (flutter, then lie flat). Short-lived slashes, rings and beams round it out.
-- **Portraits** (`ui/portraits.js`): each unit's 3D model is rendered once into a transparent PNG. Every
-  non-glowing material becomes black, which gives the stark silhouettes with glowing eye-slashes used by
-  the cards and cut-ins.
+- **Silhouettes** (`ui/silhouettes.js`): hand-authored polygon art (jester, queen, oracle, and the full-body
+  leader for the splash). The layers are a white offset copy (rim light), an ink body, a red halftone pattern and
+  white hatch strokes clipped to the body, then glowing gear (eye-slit, visor, holo glasses, particles).
+  The art stays faceless. Each silhouette is served as an SVG data-URL so it works in `<img>` and can be drawn
+  into the All-Out shatter canvas.
+- **Comic kit** (`ui/comic.js`): deterministic generators for starbursts (SVG and CSS `clip-path`), ink
+  splatters, speedline fields converging on a focal point, and torn-paper `polygon()` clip paths.
 - **Cut-ins** (`ui/hud.js`, `ui/style.css`):
-  - 1-MORE is pure CSS: clip-path jagged band, speed lines and keyframes.
+  - 1-MORE is a torn-paper band (white backing plus an ink band) with Ben-Day dots, a speedline field, the silhouette, a burst star and badge.
   - ALL-OUT starts with 3 skewed CSS panels.
   - The tap-time frame and the panels are then baked into a half-resolution canvas and broken into about 60 triangles that fly apart on a 2D overlay canvas.
   - The ransom-note letters are individually styled spans.

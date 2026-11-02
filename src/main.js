@@ -7,7 +7,8 @@ import { createPost } from './render/post.js';
 import { Fx } from './render/fx.js';
 import { View, CameraRig } from './render/view.js';
 import { Hud } from './ui/hud.js';
-import { renderPortraits } from './ui/portraits.js';
+import { buildPalace } from './render/palace.js';
+import { silhouetteURL } from './ui/silhouettes.js';
 
 const params = new URLSearchParams(location.search);
 const coarse = matchMedia('(pointer: coarse)').matches;
@@ -32,12 +33,13 @@ renderer.toneMappingExposure = 1.05;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x07060a);
-scene.fog = new THREE.Fog(0x07060a, 22, 46);
-const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 120);
+scene.background = new THREE.Color(0x0c0714);
+scene.fog = new THREE.FogExp2(0x0c0714, 0.025); // velvet Palace haze
+const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 240);
 const rig = new CameraRig(camera);
 
 let game = new Game();
+const palace = buildPalace(scene, { quality: quality === 'low' ? 'low' : 'high' });
 const arena = buildArena(scene, game.board, { quality: quality === 'low' ? 'low' : 'high' });
 const post = createPost(renderer, scene, camera, { quality: quality === 'low' ? 'low' : 'high' });
 const fx = new Fx(scene);
@@ -55,7 +57,7 @@ ghost.visible = false;
 scene.add(ghost);
 
 // ---------------------------------------------------------------- portraits + HUD
-const portraits = renderPortraits(Object.keys(UNITS));
+const portraits = Object.fromEntries(['jester', 'queen', 'oracle', 'leader'].map((id) => [id, silhouetteURL(id)]));
 const state = { speed: 1, paused: false, cine: false, selected: null, card: null, dragging: false, freezeReq: null, firstBreak: true };
 const hud = new Hud(document.getElementById('ui'), portraits, {
   cardDown(id) {
@@ -211,6 +213,7 @@ function newGame() {
   hud.setSpeed(1);
   togglePause(false);
   select(null);
+  rig.estGoal = 0; // glide down from the establishing shot into the battle framing
   hud.startButton('START SHOW', () => {
     game.start();
     hud.hint('Break posture (yellow bar) → 1-MORE → Baton Pass. Down 3 Shadows → ALL-OUT!', 5000);
@@ -219,6 +222,7 @@ function newGame() {
 }
 
 function titleScreen() {
+  rig.estGoal = 1;
   const ov = hud.overlay(`
     <div class="logo"><div class="a">ENCORE<br>PROTOCOL</div><div class="b">PHANTOM SHOWCASE</div></div>
     <div class="howto">
@@ -261,12 +265,14 @@ function onEvents(events) {
           <button class="startbtn live" style="position:static;transform:skewX(-12deg)"><span>ENCORE</span></button>`);
         ov.querySelector('button').addEventListener('click', () => { ov.remove(); newGame(); });
         fx.cardsRain(140, 7);
+        rig.estGoal = 1;
         break;
       }
       case 'lost': {
         const ov = hud.overlay(`<div class="logo"><div class="a">CURTAIN<br>FALLS</div><div class="b">WAVE ${game.waveIdx + 1} · ${game.kills} SHADOWS</div></div>
           <button class="startbtn live" style="position:static;transform:skewX(-12deg)"><span>RETRY</span></button>`);
         ov.querySelector('button').addEventListener('click', () => { ov.remove(); newGame(); });
+        rig.estGoal = 1;
         break;
       }
       default:
@@ -280,13 +286,10 @@ function resize() {
   const h = window.innerHeight;
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
-  camera.fov = w < h ? 34 : 30;
   camera.updateProjectionMatrix();
   const deck = document.querySelector('.deck');
   const deckH = deck ? h - deck.getBoundingClientRect().top + 6 : 130;
   rig.fit(w, h, w < 620 || h < 500 ? 46 : 60, Math.min(deckH, h * 0.4));
-  scene.fog.near = rig.baseDist + 4;
-  scene.fog.far = rig.baseDist + 26;
   post.setSize(w, h, pixelRatio);
 }
 window.addEventListener('resize', resize);
@@ -323,6 +326,7 @@ function loop() {
   if (!state.cine) view.update(vdt, game, camera, state.selected);
   fx.update(state.cine && !state.freezeReq ? dt * 0.6 : vdt);
   arena.update(t, !!state.card);
+  palace.update(t);
   rig.update(dt);
   const u = post.halftone.uniforms;
   u.uAberration.value = Math.max(0, u.uAberration.value - dt * 4);
@@ -345,4 +349,4 @@ resize();
 requestAnimationFrame(loop);
 
 // debug / smoke-test handle
-window.__game = { get game() { return game; }, state, hud, view, rig, post, fx, scene, newGame, requestAllOut };
+window.__game = { get game() { return game; }, state, hud, view, rig, post, fx, scene, palace, newGame, requestAllOut };

@@ -1,8 +1,8 @@
 # ENCORE PROTOCOL · Phantom Showcase
 
-### A stylized 3D isometric tower defense in Three.js · cel-shaded · built for phones
+### A stylized 3D tower defense in Three.js · cel-shaded · set in a neon Palace · built for phones
 
-![Title](docs/screenshots/01-title.png)
+![The Palace establishing shot](docs/screenshots/01-title.png)
 
 Shadows march down a crimson runway toward a floating golden **Treasure**. Deploy your Phantoms beside
 it, **break their posture** to shatter their gold masks, chain **1-MORE → Baton Pass**, and when three are
@@ -49,11 +49,17 @@ npm run dev          # prints a "Network:" URL such as http://192.168.1.20:5173 
 
 ## What's in it
 
-- **Isometric 3D arena** (Three.js, WebGL):
-  - The view is fixed at 45° with a −6° Dutch tilt, and smoothly zooms in on Baton Passes.
+- **3D arena** (Three.js, WebGL):
+  - The battle camera sits close at (0, 9, 8) looking at the centre with a −6° Dutch tilt. Its FOV adapts so every build plate fits any phone.
+  - **1-MORE** and **Baton Pass** spring the camera into a punch-in zoom that snaps to a −8° Dutch tilt.
+  - The title and results screens use a low, drifting establishing shot of the whole Palace, then glide down into the battle view.
   - The floor is reflective obsidian (`#0A0A0E`).
   - A raised crimson runway (`#D90429`) has emissive gold neon edges and marching chevrons.
   - The Treasure is a floating, spinning geometric crown.
+- **The Palace** around it (`src/render/palace.js`, about 25 draw calls, all instanced or merged):
+  - A velvet `FogExp2(0x0c0714, 0.025)` haze over a mirror-glossy marble checkerboard that runs to the horizon, etched with a neon circuit matrix.
+  - A distant neon skyline with gothic spires, giant wireframe roulette wheels, and golden chains hanging out of the dark.
+  - Gothic balustrades and glowing pointed archways around the board, with dice and calling cards floating past.
 - **Cel-shading everywhere**:
   - `MeshToonMaterial` uses a hard 3-step ramp, plus an injected hard-cutoff specular and a sharp rim light.
   - Meshes get inverted-hull ink outlines.
@@ -68,12 +74,17 @@ npm run dev          # prints a "Network:" URL such as http://192.168.1.20:5173 
   - **Oracle** (Tactician): a floating neon-green icosahedral drone pod with holographic orbital rings. Its long-range marks slow Shadows and expose their posture.
 - **Shadows**: faceless glossy obsidian mannequins in gold porcelain masks, with glowing yellow eyes and a marching walk cycle. There are four kinds, including a crowned boss.
 - **Posture Break**: an 80 ms hit-stop, then the mask **shatters into golden shards** and **black/red ink** erupts. The Shadow drops to its knees and takes ×1.5 damage.
-- **1-MORE screen-slice**: a −12° banner rips across the screen with a jagged white border, speed lines, the unit's silhouette (rendered live from its 3D model) with a glowing eye-slash, and a yellow **1-MORE!** badge.
+- **Comic silhouettes** (`src/ui/silhouettes.js`): hand-authored angular SVG art for each Phantom. Each one has ink fill, a white offset rim light, halftone shading and hatch strokes, and no facial features:
+  - **Jester**: a side profile with swept razor locks, a popped collar, a masquerade mask with a crimson eye-slit and a raised dagger.
+  - **Queen**: a 3/4 combat stance with spiked rider pauldrons, a visor with twin red glows and a knuckle-duster fist.
+  - **Oracle**: a whipping angular mane, headphones, holo visor glasses and a matrix of digital particles.
+- **1-MORE screen-slice**: a −12° torn-paper band rips across the screen. It has a white paper backing with a red drop shadow, Ben-Day dots, heavy speedlines converging on the silhouette, a blade-swipe slash, and a yellow **1 MORE!** on an exploding star.
 - **ALL-OUT ATTACK**:
   1. The game freezes and a 3-panel comic wipe plays.
-  2. The frozen frame **shatters like glass** into a red/black splash with ransom-note **THE SHOW'S OVER** lettering.
+  2. The frozen frame **shatters like glass** into a red/black splash. A full-body **leader hero silhouette** (coat tails torn back, pulling a crimson glove tight) stands beside the ransom-note **THE SHOW'S OVER**. Around them: yellow and white accent cuts, ink splatters, exploding comic stars and fluttering calling cards.
   3. Calling cards rain across the arena.
 - **8 waves**, including a boss wave. The difficulty is tuned so that, by test, a good build **needs** the Baton Pass / All-Out mechanics to win.
+- **Comic HUD**: deploy cards skewed −6° with jagged white frames, halftone faces and yellow burst price badges, set in bold slanted all-caps type throughout.
 - **Mobile-first**:
   - Touch and drag input, a responsive HUD for portrait and landscape, and safe-area insets.
   - Adaptive resolution that lowers the pixel ratio if frames drop.
@@ -93,7 +104,7 @@ npm run smoke      # browser e2e against the build (needs: npm i -D playwright &
 src/
   sim/      pure deterministic game logic (no DOM / Three.js): board, units, enemies, waves, posture, baton, all-out
   render/   Three.js: toon materials + outlines, arena, models, FX pools, camera rig, post-processing
-  ui/       DOM HUD, comic cut-ins (1-MORE, ALL-OUT shatter), 3D-silhouette portraits, CSS
+  ui/       DOM HUD, comic cut-ins (1-MORE, ALL-OUT shatter), SVG silhouettes + comic kit (stars, ink, speedlines, torn paper), CSS
   main.js   renderer setup, input, game loop, cut-in orchestration
 ```
 
