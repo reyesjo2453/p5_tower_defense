@@ -4,7 +4,10 @@
 
 Everything on screen and in your ears is generated at runtime from original code:
 
-- Portraits, tokens, Echoes, Persona silhouettes: `src/render/characters.js`, `personas.js`, `echoes.js`.
+- Portraits, tokens, Echoes, summoned spirits: `src/render/characters.js`, `personas.js`, `echoes.js`.
+  The operator designs (`src/data/looks.js`) and spirits are **original designs** made for this project.
+  The procedural pipeline will not imitate official character art; that stays your call via the override below.
+- Lighting and post-processing: `src/render/lighting.js`, `src/render/post.js`.
 - Backgrounds and cinematics: `backgrounds.js`, `cinematics.js`.
 - Music and SFX: `src/core/audio.js` (WebAudio synth).
 

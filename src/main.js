@@ -6,6 +6,7 @@ import { HubScene } from './scenes/hub.js';
 import { RosterScene, SettingsScene } from './scenes/menus.js';
 import { CutsceneScene } from './scenes/cutscene.js';
 import { BattleScene } from './scenes/battle.js';
+import { Post, GRADES } from './render/post.js';
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -19,6 +20,7 @@ const game = {
   persist,
   audio,
   scene: null,
+  post: null,
   scenes: {},
   go(name, params = {}) {
     if (this.scene?.exit) this.scene.exit();
@@ -35,6 +37,8 @@ const game = {
     this.go('cutscene', { id, onDone });
   },
 };
+game.post = new Post(ctx);
+game.post.quality = game.save.settings.quality === 'auto' || !game.save.settings.quality ? 'high' : game.save.settings.quality;
 window.__game = game; // handy for debugging / smoke tests
 
 game.scenes = {
@@ -79,16 +83,32 @@ window.addEventListener('pointerdown', () => audio.resume(), { once: true });
 audio.setVolumes(game.save.settings.music, game.save.settings.sfx);
 
 let last = performance.now();
+// Auto quality: if frames stay slow for a few seconds, step high -> low -> off.
+let slowFor = 0;
+let ema = 1 / 60;
+function autoQuality(rawDt) {
+  if ((game.save.settings.quality || 'auto') !== 'auto' || document.hidden) return;
+  ema = ema * 0.95 + rawDt * 0.05;
+  slowFor = ema > 1 / 38 ? slowFor + rawDt : 0;
+  if (slowFor > 3 && game.post.quality !== 'off') {
+    game.post.quality = game.post.quality === 'high' ? 'low' : 'off';
+    slowFor = 0;
+  }
+}
+
 function frame(now) {
-  const dt = Math.min(0.05, (now - last) / 1000);
+  const raw = (now - last) / 1000;
+  const dt = Math.min(0.05, raw);
   last = now;
+  if (raw < 0.5) autoQuality(raw);
   const sc = game.scene;
   if (sc) {
     sc.update(dt);
-    ctx.save();
-    ctx.clearRect(0, 0, 1280, 720);
-    sc.draw(ctx);
-    ctx.restore();
+    const sctx = game.post.begin();
+    sctx.save();
+    sc.draw(sctx);
+    sctx.restore();
+    game.post.end(GRADES[sc.grade] || GRADES.default, sc.postFx?.() || {});
   }
   requestAnimationFrame(frame);
 }

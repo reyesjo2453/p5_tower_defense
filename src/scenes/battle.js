@@ -424,12 +424,25 @@ export class BattleScene {
     setTimeout(() => this.hud && this.hud.appendChild(el), won ? 900 : 600);
   }
 
+  get grade() {
+    return this.sub ? 'cutscene' : 'battle';
+  }
+
+  postFx() {
+    const s = this.game.save.settings;
+    const shake = s.screenShake ? this.fx.shake : 0;
+    let ab = Math.min(0.8, shake / 26);
+    if (this.cutin.active) ab = Math.max(ab, Math.max(0, 0.45 - this.cutin.age * 1.5));
+    if (s.reduceFlash) ab *= 0.3;
+    return { aberration: ab };
+  }
+
   draw(ctx) {
     if (this.sub) return this.sub.draw(ctx);
     const b = this.battle;
     ctx.save();
     if (this.fx.shake > 0) ctx.translate((Math.random() - 0.5) * this.fx.shake, (Math.random() - 0.5) * this.fx.shake);
-    drawBattle(ctx, b, this.t, this.ui);
+    drawBattle(ctx, b, this.t, this.ui, this.fx, this.game.post?.quality);
     this.fx.draw(ctx, this.t);
     ctx.restore();
     if (this.fx.flash > 0) {

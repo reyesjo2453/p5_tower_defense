@@ -4,10 +4,44 @@ import { poly, glow } from './draw.js';
 
 const INK = '#0b0714';
 
+let curS = 80;
+/** Body material: glossy dark shell lit from the upper-left, tinted by the Echo's colour. */
 function body(ctx, color, flash) {
-  ctx.fillStyle = flash > 0 ? '#fff' : INK;
+  if (flash > 0) {
+    ctx.fillStyle = '#fff';
+  } else {
+    const s = curS;
+    const g = ctx.createRadialGradient(-s * 0.18, -s * 0.75, s * 0.02, 0, -s * 0.4, s * 0.75);
+    g.addColorStop(0, hexA(color, 0.75));
+    g.addColorStop(0.25, hexA(color, 0.28));
+    g.addColorStop(0.6, '#140a22');
+    g.addColorStop(1, INK);
+    ctx.fillStyle = g;
+  }
   ctx.strokeStyle = color;
-  ctx.lineWidth = 3;
+  ctx.lineWidth = Math.max(2.5, curS * 0.035);
+}
+
+/** Dark smoke wisps peeling off an Echo, plus a pulsing aura behind it. */
+function wisps(ctx, s, t, color, down) {
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const a = down ? 0.1 : 0.22 + 0.08 * Math.sin(t * 3);
+  const g = ctx.createRadialGradient(0, -s * 0.45, 0, 0, -s * 0.45, s * 0.8);
+  g.addColorStop(0, hexA(color, a));
+  g.addColorStop(1, hexA(color, 0));
+  ctx.fillStyle = g;
+  ctx.fillRect(-s, -s * 1.3, s * 2, s * 1.4);
+  ctx.restore();
+  ctx.save();
+  for (let i = 0; i < 6; i++) {
+    const k = (t * 0.5 + i / 6) % 1;
+    ctx.fillStyle = `rgba(8,4,16,${0.55 * (1 - k)})`;
+    ctx.beginPath();
+    ctx.arc(Math.sin(i * 2.7 + t) * s * 0.25, -s * 0.3 - k * s * 0.9, s * (0.05 + k * 0.08), 0, TAU);
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 function eyes(ctx, x, y, r, color, down) {
@@ -167,8 +201,10 @@ export function drawEcho(ctx, def, x, y, s, t, st = {}) {
   const fn = SHAPES[def.shape] || SHAPES.blob;
   ctx.save();
   ctx.translate(x, y);
+  curS = s;
+  wisps(ctx, s, t, def.color, st.down);
   ctx.shadowColor = def.color;
-  ctx.shadowBlur = st.down ? 0 : 14;
+  ctx.shadowBlur = st.down ? 0 : 16;
   fn(ctx, s, t, def, { flash: st.flash || 0, down: st.down || false, dir: st.dir ?? 1 });
   ctx.restore();
 }

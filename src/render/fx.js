@@ -5,6 +5,11 @@ import { px, py, TILE } from './layout.js';
 import { ELEMENTS } from '../data/operators.js';
 import { SKILL_FX } from './skillfx.js';
 
+const SKILL_LIGHT = {
+  arsene_eiha: '#ff2a4a', kidd_thunder: '#ffe933', carmen_agneyastra: '#ff7a2a', zorro_mediarama: '#6dff9c',
+  goemon_diamond: '#7fe3ff', alazif_scan: '#ff9f1c', milady_aegis: '#ff7bb0', anat_atomic: '#c58bff', anat_impact: '#d6a6ff',
+};
+
 export class Fx {
   constructor(settings) {
     this.list = [];
@@ -125,6 +130,47 @@ export class Fx {
     this.list = this.list.filter((e) => e.age < e.dur);
     this.shake = Math.max(0, this.shake - dt * 30);
     this.flash = Math.max(0, this.flash - dt * 3);
+  }
+
+  /** Feed transient light sources (impacts, bolts, skills) into the battle light map. */
+  lights(lm) {
+    for (const e of this.list) {
+      const k = clamp(e.age / e.dur, 0, 1);
+      const f = 1 - k;
+      switch (e.type) {
+        case 'bolt':
+          lm.add(e.b.x, e.b.y, e.big ? 150 : 90, e.color, 0.9 * f);
+          lm.add(e.a.x, e.a.y, 70, e.color, 0.6 * f);
+          break;
+        case 'slash':
+        case 'burst':
+          lm.add(e.x, e.y, 110, e.color, 0.9 * f);
+          break;
+        case 'chain':
+          for (const p of e.pts) lm.add(p.x, p.y, 90, e.color, 0.8 * f);
+          break;
+        case 'heal':
+          lm.add(e.b.x, e.b.y, 90, e.color, 0.7 * f);
+          break;
+        case 'death':
+          lm.add(e.x, e.y - 20, e.boss ? 320 : 140, '#ff9fd0', 1.1 * f);
+          break;
+        case 'ring':
+          lm.add(e.x, e.y, e.r * 1.2, e.color || '#fff', 0.8 * f);
+          break;
+        case 'puff':
+          lm.add(e.x, e.y, 90, e.color, 0.5 * f);
+          break;
+        case 'skill': {
+          const col = SKILL_LIGHT[e.id] || '#ffffff';
+          const r = Math.max(160, (e.radius || 100) * 1.4);
+          lm.add(e.center ? e.center.x : e.x, e.center ? e.center.y : e.y, r, col, 1.2 * Math.sin(Math.min(1, k * 1.2) * Math.PI));
+          for (const tg of e.targets || []) lm.add(tg.x, tg.y, 100, col, 0.8 * Math.sin(k * Math.PI));
+          break;
+        }
+        default:
+      }
+    }
   }
 
   draw(ctx, t) {

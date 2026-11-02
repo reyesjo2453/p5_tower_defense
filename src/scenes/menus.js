@@ -8,6 +8,7 @@ import { portraitCanvas, unlockedOperators } from './hub.js';
 
 export class RosterScene {
   constructor(game) {
+    this.grade = 'menu';
     this.game = game;
   }
 
@@ -84,6 +85,7 @@ export class RosterScene {
 
 export class SettingsScene {
   constructor(game) {
+    this.grade = 'menu';
     this.game = game;
   }
 
@@ -102,13 +104,17 @@ export class SettingsScene {
         <label>Text speed <input type="range" min="15" max="120" step="5" value="${s.textSpeed}" data-k="textSpeed" /></label>
         <label>Screen shake <input type="checkbox" ${s.screenShake ? 'checked' : ''} data-k="screenShake" /></label>
         <label>Reduce flashing (accessibility) <input type="checkbox" ${s.reduceFlash ? 'checked' : ''} data-k="reduceFlash" /></label>
+        <label>Graphics quality <select data-k="quality">
+          ${['auto', 'high', 'low', 'off'].map((q) => `<option value="${q}" ${s.quality === q ? 'selected' : ''}>${{ auto: 'Auto (adapts to your device)', high: 'High (bloom, lighting, grain)', low: 'Low (lighting only)', off: 'Off (fastest)' }[q]}</option>`).join('')}
+        </select></label>
         <label>Auto-advance dialogue <input type="checkbox" ${s.autoAdvance ? 'checked' : ''} data-k="autoAdvance" /></label>
         <div class="hint">Keyboard: Space = pause, F = speed, S = skill, R = retreat, 1–6 = select operator, Esc = cancel.</div>
       </div>`;
     el.addEventListener('input', (e) => {
       const k = e.target.dataset.k;
       if (!k) return;
-      s[k] = e.target.type === 'checkbox' ? e.target.checked : Number(e.target.value);
+      s[k] = e.target.type === 'checkbox' ? e.target.checked : e.target.tagName === 'SELECT' ? e.target.value : Number(e.target.value);
+      if (k === 'quality') g.post.quality = s.quality === 'auto' ? 'high' : s.quality;
       g.audio.setVolumes(s.music, s.sfx);
       g.persist();
     });

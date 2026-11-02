@@ -29,6 +29,7 @@ export function portraitCanvas(id, size = 200) {
 
 export class HubScene {
   constructor(game) {
+    this.grade = 'menu';
     this.game = game;
   }
 

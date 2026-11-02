@@ -105,7 +105,8 @@ plan and must **fail** if you do nothing. Re-run `npm test` after touching any n
 
 ```
 src/sim/      Pure, deterministic game logic. No DOM. Emits events.
-src/render/   Canvas drawing: field, characters, personas, skill FX, cut-ins, cinematics.
+src/render/   Canvas drawing: field, characters, summoned spirits, skill FX, cut-ins, cinematics,
+              lighting (light map) and post (bloom / grade / aberration / grain).
 src/scenes/   Title, hub, battle (input/HUD), cutscene player, roster, settings.
 src/data/     Operators, enemies, stages, story, procedural "looks".
 src/core/     Audio synth, assets loader, save data, math utils.
@@ -114,3 +115,23 @@ src/core/     Audio synth, assets loader, save data, math utils.
 The sim is the single source of truth; the renderer only consumes `battle.events`
 (`deploy`, `shot`, `dmg`, `down`, `skill`, `baton`, `allout`, `scene`, ...). This keeps combat testable
 headlessly and makes a different renderer (or real sprite/Spine art) a drop-in change.
+
+### Render pipeline (v0.2)
+
+1. The scene draws into an offscreen 1280×720 buffer (`Post.begin()`).
+2. In battle, the animated backdrop comes first, then the **cached static field**. That is the 2.5D
+   tile set built once per stage: raised high-ground blocks with bevels and cast shadows, glossy path
+   floors with emissive edges, and themed props.
+3. Next come the animated layers: portals, route energy, overlays, depth-sorted units with contact
+   shadows, FX and ambient motes.
+4. **Light map** (`lighting.js`): a half-resolution buffer is filled with the theme's ambient colour.
+   Lights are added from portals, units and `Fx.lights()`, and the result multiplies the scene. Light
+   cores are then re-added additively.
+5. **Post** (`post.js`) applies, in order:
+   - contrast and saturation, with chromatic aberration while the screen shakes or a cut-in starts;
+   - split-tone grade;
+   - bloom (a quarter/eighth-resolution bright pass blurred with `ctx.filter`, composited with `lighter`);
+   - vignette with baked scanlines;
+   - film grain.
+6. Quality: `auto` starts on `high` and steps down to `low` (no bloom or grain) and then `off` if the
+   frame time stays above about 26 ms. Users can pin a level in Settings.

@@ -18,9 +18,12 @@ on a grid, block and shoot "Echoes" (replays of regret), exploit elemental weakn
 | ![Battle](docs/screenshots/05-battle.png) | ![Skill](docs/screenshots/06-skill-cutin.png) |
 | ![Fire](docs/screenshots/07-skill-fire.png) | ![All-Out](docs/screenshots/08-all-out-rush.png) |
 | ![Maestro](docs/screenshots/02-maestro-reveal.png) | ![Hub](docs/screenshots/04-hub.png) |
+| ![Dialogue](docs/screenshots/03-dialogue.png) | ![Cast](docs/screenshots/09-cast.png) |
 
 > ⚠️ **Fan project.** Unofficial and non-commercial; not affiliated with ATLUS/SEGA. This repo contains **no
-> ripped game assets**. All visuals and audio are original and procedurally generated; see
+> ripped game assets**. All visuals and audio are original and procedurally generated. The operators and
+> their summoned spirits use **original Encore Protocol designs** and are not recreations of the game's
+> character art. See
 > [NOTICE.md](NOTICE.md) and [docs/ASSETS.md](docs/ASSETS.md) for how to plug in art you own.
 
 ## Play
@@ -55,8 +58,15 @@ Any static file server works too (`python3 -m http.server`); the game is plain E
   boss with a Crescendo AoE and an **Encore** revival.
 - **Chapter 1 · REPLAY**: 3 stages, ~95 lines of original story, 4 scripted cinematics, mid-battle
   story beats, unlock progression, save data.
-- **Presentation**: Persona-esque red/black/white UI, halftone/speed-line cut-ins, typed dialogue with
-  camera shake/glitch FX, procedural synth soundtrack and SFX.
+- **Presentation (v0.2 art pass)**:
+  - A post-processing pipeline with bloom, colour grading, chromatic aberration on impacts, film grain
+    and vignette.
+  - Dynamic lighting driven by units and FX.
+  - 2.5D lit battlefields with raised high ground, emissive trims, animated gates and flowing route energy.
+  - Cel-shaded character busts with rim light and expressions.
+  - Animated chibi battle tokens and light-built summoned spirits.
+  - Halftone and speed-line cut-ins, typed dialogue with camera FX, and a procedural synth soundtrack.
+- **Graphics quality**: Auto, High, Low or Off in Settings. Auto steps down by itself on slow devices.
 - **Accessibility**: reduce-flashing and screen-shake toggles, adjustable text speed, auto-advance.
 
 ## Controls
@@ -99,8 +109,9 @@ src/
 ## Honest status
 
 This is a **vertical slice**, not a finished AAA game. The mechanics, UX, animation systems and story
-structure are in place and tested, but the art is stylised placeholder, generated in code. The path to
-production-grade visuals is the asset-override system plus the [roadmap](docs/ROADMAP.md).
+structure are in place and tested. The v0.2 art pass gave everything a lit, post-processed, cel-shaded look,
+but all of it is still drawn in code. Hand-painted illustration and keyframed animation would be the next
+step up; the asset-override system and the [roadmap](docs/ROADMAP.md) are the path there.
 
 ---
 

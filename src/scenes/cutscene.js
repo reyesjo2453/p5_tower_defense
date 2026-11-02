@@ -12,6 +12,7 @@ const POS = { 'far-left': 0.13, left: 0.28, center: 0.5, right: 0.72, 'far-right
 
 export class CutsceneScene {
   constructor(game) {
+    this.grade = 'cutscene';
     this.game = game;
   }
 

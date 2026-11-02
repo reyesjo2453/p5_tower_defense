@@ -7,6 +7,7 @@ import { resetSave } from '../core/storage.js';
 
 export class TitleScene {
   constructor(game) {
+    this.grade = 'title';
     this.game = game;
   }
 
@@ -24,7 +25,7 @@ export class TitleScene {
         <button class="btn alt" data-act="roster"><span>Roster</span></button>
         <button class="btn alt" data-act="settings"><span>Settings</span></button>
       </div>
-      <div class="title-foot">Unofficial, non-commercial fan project. Not affiliated with or endorsed by ATLUS or SEGA.<br/>Persona is a trademark of ATLUS. All art here is original placeholder work.</div>`;
+      <div class="title-foot">Unofficial, non-commercial fan project. Not affiliated with or endorsed by ATLUS or SEGA.<br/>Persona is a trademark of ATLUS. All character designs and art here are original.</div>`;
     el.addEventListener('click', (e) => {
       const act = e.target.closest('button')?.dataset.act;
       if (!act) return;
@@ -56,25 +57,61 @@ export class TitleScene {
   draw(ctx) {
     const t = this.t;
     drawBackground(ctx, 'loop_void', t);
-    // big red slab
+    // volumetric light shafts behind the hero
     ctx.save();
-    ctx.fillStyle = RED;
-    poly(ctx, [[-40, 0], [W * 0.62, 0], [W * 0.46, H], [-40, H]]);
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 7; i++) {
+      const a = -1.95 + i * 0.13 + Math.sin(t * 0.3 + i) * 0.02;
+      const g = ctx.createLinearGradient(W * 0.8, -40, W * 0.8 + Math.cos(a) * 900, -40 - Math.sin(a) * 900);
+      g.addColorStop(0, 'rgba(255,60,90,0.16)');
+      g.addColorStop(1, 'rgba(255,60,90,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(W * 0.8, -40);
+      ctx.lineTo(W * 0.8 + Math.cos(a - 0.04) * 1100, -40 - Math.sin(a - 0.04) * 1100);
+      ctx.lineTo(W * 0.8 + Math.cos(a + 0.04) * 1100, -40 - Math.sin(a + 0.04) * 1100);
+      ctx.fill();
+    }
+    ctx.restore();
+    // summoned spirit behind the hero
+    const k = easeOutCubic(pulse(t, 0.1, 1.4));
+    ctx.save();
+    ctx.globalAlpha = 0.95 * k;
+    starburst(ctx, W * 0.76, 300, 140, 560, 18, t * 0.06, 'rgba(255,255,255,0.05)');
+    drawPersona(ctx, 'arsene', W * 0.79, 300 + (1 - k) * 80, 270, t, '#ff2a4a');
+    ctx.restore();
+    // big red slab with halftone and ink edge
+    ctx.save();
+    const sg = ctx.createLinearGradient(0, 0, W * 0.6, H);
+    sg.addColorStop(0, '#ff1a35');
+    sg.addColorStop(1, '#9e0016');
+    ctx.fillStyle = sg;
+    poly(ctx, [[-40, 0], [W * 0.56, 0], [W * 0.42, H], [-40, H]]);
     ctx.fill();
-    halftone(ctx, 0, 0, W * 0.6, H, 14, 'rgba(0,0,0,0.25)', (x, y) => 1 - x);
+    halftone(ctx, 0, 0, W * 0.56, H, 14, 'rgba(0,0,0,0.22)', (x, y) => Math.max(0, x * 1.2 - 0.1 + y * 0.2));
     ctx.fillStyle = '#000';
-    poly(ctx, [[W * 0.62, 0], [W * 0.66, 0], [W * 0.5, H], [W * 0.46, H]]);
+    poly(ctx, [[W * 0.56, 0], [W * 0.585, 0], [W * 0.445, H], [W * 0.42, H]]);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    poly(ctx, [[W * 0.585, 0], [W * 0.592, 0], [W * 0.452, H], [W * 0.445, H]]);
     ctx.fill();
     ctx.restore();
-    // persona behind Joker
-    const k = easeOutCubic(pulse(t, 0.1, 1.2));
+    // hero
+    drawPortrait(ctx, 'joker', W * 0.74 + (1 - k) * 160, H + 20, 600, { t, emote: 'smirk' });
+    speedLines(ctx, W * 0.74, 280, t, 'rgba(255,255,255,0.045)', 40, 300, 1200);
+    // drifting shards
     ctx.save();
-    ctx.globalAlpha = 0.9 * k;
-    starburst(ctx, W * 0.78, 330, 150, 520, 16, t * 0.1, 'rgba(255,255,255,0.08)');
-    drawPersona(ctx, 'arsene', W * 0.78, 330 + (1 - k) * 60, 330, t, '#e8002d');
+    for (let i = 0; i < 14; i++) {
+      const x = ((i * 173 + t * (20 + (i % 4) * 9)) % (W + 100)) - 50;
+      const y = (i * 97) % H + Math.sin(t + i) * 20;
+      ctx.translate(x, y);
+      ctx.rotate(t * (0.5 + (i % 3) * 0.3) + i);
+      ctx.fillStyle = i % 3 ? 'rgba(255,255,255,0.5)' : 'rgba(255,40,70,0.8)';
+      poly(ctx, [[0, -9], [4, 0], [0, 9], [-4, 0]]);
+      ctx.fill();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+    }
     ctx.restore();
-    drawPortrait(ctx, 'joker', W * 0.72 + (1 - k) * 200, H + 10, 760, { t, emote: 'smirk' });
-    speedLines(ctx, W * 0.72, 300, t, 'rgba(255,255,255,0.05)', 40, 260, 1200);
     // logo
     const lk = easeOutBack(pulse(t, 0.2, 0.8));
     ctx.save();
@@ -84,8 +121,17 @@ export class TitleScene {
     ctx.globalAlpha = Math.min(1, lk * 1.5);
     text(ctx, 'ENCORE', 0, 0, { size: 190, fill: '#fff', stroke: '#000', lw: 20, skew: -0.2, shadow: '#000' });
     text(ctx, 'PROTOCOL', 130, 110, { size: 100, fill: '#000', stroke: '#fff', lw: 12, skew: -0.2 });
+    // logo glint
+    const gx = ((t * 500) % 2400) - 400;
+    ctx.globalCompositeOperation = 'lighter';
+    const gl = ctx.createLinearGradient(gx - 60, 0, gx + 60, 0);
+    gl.addColorStop(0, 'rgba(255,255,255,0)');
+    gl.addColorStop(0.5, 'rgba(255,255,255,0.35)');
+    gl.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = gl;
+    ctx.fillRect(-40, -170, 700, 300);
     ctx.restore();
     text(ctx, 'A TOWER DEFENSE OF REGRET', 100, 400, { size: 28, fill: '#fff', stroke: '#000', lw: 5, skew: -0.2, alpha: pulse(t, 1, 1.5) });
-    vignette(ctx, 0.5);
+    vignette(ctx, 0.35);
   }
 }

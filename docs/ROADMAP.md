@@ -7,7 +7,8 @@
 - [x] Procedural art/audio, save data, settings (incl. reduce-flash), tests, CI
 
 ## Next: polish toward "AAA"
-- [ ] Real art pass: swap procedural portraits for commissioned/owned art via `manifest.json`
+- [x] Rendering pass: bloom, grading, dynamic lighting, 2.5D lit fields, cel-shaded original character designs
+- [ ] Illustrated art pass: commissioned/owned portraits and sprites via `manifest.json`
 - [ ] Skeletal animation (Spine/DragonBones) for tokens and attack/idle/skill poses
 - [ ] Voice acting hooks + subtitles in the cutscene player
 - [ ] Full music score (stems per scene, stinger on All-Out)

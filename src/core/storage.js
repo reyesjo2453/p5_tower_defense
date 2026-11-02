@@ -14,6 +14,7 @@ const DEFAULTS = () => ({
     screenShake: true,
     reduceFlash: false,
     autoAdvance: false,
+    quality: 'auto', // auto | high | low | off  (post-processing: bloom, grain, lighting)
   },
 });
 
