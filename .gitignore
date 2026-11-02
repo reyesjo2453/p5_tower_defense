@@ -1,0 +1,12 @@
+node_modules/
+.DS_Store
+*.log
+.env
+.vscode/
+.idea/
+# Local art/audio you add yourself. Keep your own (non-redistributable) assets out of git.
+assets/**/*
+!assets/**/README.md
+!assets/manifest.json
+!assets/**/.gitkeep
+shots/
