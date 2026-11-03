@@ -2,6 +2,7 @@
 // and the camera rig (close (0, 9, 8) framing, -6deg Dutch roll, spring punch-ins with a -8deg tilt).
 import * as THREE from 'three';
 import { BUILDERS, buildShadow } from './models.js';
+import { instantiateUnit } from './gltfUnits.js';
 import { world, RUNWAY_H, SLOT_H } from './arena.js';
 
 const DUTCH = THREE.MathUtils.degToRad(-6); // resting Dutch roll
@@ -196,7 +197,9 @@ export class View {
   }
 
   addUnit(u) {
-    const model = BUILDERS[u.type]();
+    // imported glTF figure when one loaded (already normalized to MODEL_HEIGHT), else procedural
+    const model = instantiateUnit(u.type) ?? BUILDERS[u.type]();
+    model.size = model.gltf ? 1 : 1.3;
     const p = world(u.x, u.y, SLOT_H);
     model.root.position.copy(p);
     model.root.scale.setScalar(0.01);
@@ -258,6 +261,7 @@ export class View {
         const ev2 = this.enemies.get(ev.enemy.uid);
         if (!v || !ev2) break;
         v.atkT = 1;
+        v.model.playAttack?.();
         const tp = ev2.model.root.position.clone();
         v.atkDir.copy(tp).sub(v.base).setY(0).normalize();
         const hitP = tp.clone().setY(0.9 * ev.enemy.def.scale);
@@ -268,7 +272,7 @@ export class View {
           this.fx.ring(hitP, 0xff1a3d, 1.6, 0.25);
           this.fx.burstSparks(hitP, 7);
         } else {
-          const from = v.model.parts.body.getWorldPosition(new THREE.Vector3());
+          const from = v.model.gltf ? v.model.root.position.clone().setY(v.model.root.position.y + v.model.height * 0.7) : v.model.parts.body.getWorldPosition(new THREE.Vector3());
           this.fx.beam(from, hitP, 0x39ff88);
           this.fx.burstSparks(hitP, 4);
         }
@@ -322,7 +326,7 @@ export class View {
       const { u, model } = v;
       v.spawnT = Math.min(1, v.spawnT + dt * 3);
       const pop = v.spawnT < 1 ? 1 + Math.sin(v.spawnT * Math.PI) * 0.25 : 1;
-      model.root.scale.setScalar(Math.max(0.01, v.spawnT) * pop * 1.3);
+      model.root.scale.setScalar(Math.max(0.01, v.spawnT) * pop * model.size);
       v.atkT = Math.max(0, v.atkT - dt * 4);
       const swing = Math.sin(v.atkT * Math.PI);
       const baton = u.buffs.some((b) => b.key === 'baton');
@@ -332,7 +336,12 @@ export class View {
       dy = Math.atan2(Math.sin(dy), Math.cos(dy));
       model.root.rotation.y += dy * Math.min(1, dt * 10);
       const P = model.parts;
-      if (u.type === 'jester') {
+      if (model.gltf) {
+        // imported figure: its own clips drive the pose; add a short lunge toward the target
+        model.mixer?.update(dt * (baton ? 1.5 : 1));
+        model.root.position.copy(v.base).addScaledVector(v.atkDir, swing * (u.type === 'oracle' ? 0.08 : 0.25));
+        if (!model.mixer) P.body.position.y = Math.sin(t * 2 + v.phase) * 0.02;
+      } else if (u.type === 'jester') {
         model.root.position.copy(v.base).addScaledVector(v.atkDir, swing * 0.35);
         P.body.rotation.y = swing * 1.4;
         P.arms[0].rotation.x = -swing * 1.6 + Math.sin(t * 2 + v.phase) * 0.05;

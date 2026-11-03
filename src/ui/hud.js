@@ -55,7 +55,7 @@ export class Hud {
     for (const def of Object.values(UNITS)) {
       const c = $(`<button class="card accent-${def.id}" data-unit="${def.id}">
         <span class="frame" style="clip-path:${JAG}"></span>
-        <span class="face" style="clip-path:${JAG}">${this.portraits[def.id] ? `<img alt="" src="${this.portraits[def.id]}">` : ''}</span>
+        <span class="face" style="clip-path:${JAG}">${this.portraits.card[def.id] ? `<img alt="" src="${this.portraits.card[def.id]}">` : ''}</span>
         <span class="nm">${def.name.toUpperCase()}</span><span class="role">${def.role.toUpperCase()}</span>
         <span class="cost"><i class="bk" style="clip-path:${BURST}"></i><i class="bg" style="clip-path:${BURST}"></i><b><small>¥</small>${def.cost}</b></span>
       </button>`);
@@ -155,7 +155,7 @@ export class Hud {
         <div class="ben"></div>
         <div class="lines" style="background-image:url(&quot;${TEX.speedOne}&quot;)"></div>
       </div>
-      ${this.portraits[unitId] ? `<img class="sil" alt="" src="${this.portraits[unitId]}">` : ''}
+      ${this.portraits.cutin[unitId] ? `<img class="sil" alt="" src="${this.portraits.cutin[unitId]}">` : ''}
       <div class="slash"></div>
       <img class="star" alt="" src="${TEX.stars[0]}">
       <div class="badge">1 MORE!</div>
@@ -181,14 +181,14 @@ export class Hud {
     const el = $(`<div class="allout">
       ${ids.map((id, i) => `<div class="panel" style="clip-path:${TEX.tornV[i]}"><div class="in" style="clip-path:${TEX.tornV[i]}">
         <div class="sp" style="background-image:url(&quot;${i === 1 ? TEX.speedPanelK : TEX.speedPanel}&quot;)"></div>
-        ${this.portraits[id] ? `<img alt="" src="${this.portraits[id]}">` : ''}<div class="lbl">${UNITS[id].name.toUpperCase()}</div></div></div>`).join('')}
+        ${this.portraits.cutin[id] ? `<img alt="" src="${this.portraits.cutin[id]}">` : ''}<div class="lbl">${UNITS[id].name.toUpperCase()}</div></div></div>`).join('')}
       <div class="title">ALL-OUT ATTACK</div>
     </div>`);
     this.root.appendChild(el);
     await wait(1600);
     // shatter the frozen frame (comic panels + arena) into shards that fly apart over the splash
     const splash = $(`<div class="splash"><div class="sp" style="background-image:url(&quot;${TEX.speedSplash}&quot;)"></div></div>`);
-    splash.appendChild(splashArt(this.portraits.leader));
+    splash.appendChild(splashArt(this.portraits.finisher));
     const words = "THE SHOW'S OVER".split(' ');
     const ransom = $('<div class="ransom"></div>');
     let n = 0;

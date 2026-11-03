@@ -98,13 +98,19 @@ npm run dev        # Vite dev server (LAN-accessible)
 npm test           # 12 headless simulation tests incl. balance guard rails
 npm run build      # production build -> dist/
 npm run smoke      # browser e2e against the build (needs: npm i -D playwright && npx playwright install chromium)
+npm run smoke:assets  # same, with the CC0 placeholder glTF models + PNG cut-ins dropped in
 ```
+
+**Your own art:** put `.glb` models in `public/models/` and PNG cut-ins in `public/portraits/`, or in their
+git-ignored `custom/` folders for local-only art. Models are auto-scaled to 1.8 units, grounded, cel-shaded and
+ink-outlined; anything missing falls back to the built-in art. See [docs/ASSETS.md](docs/ASSETS.md).
 
 ```
 src/
   sim/      pure deterministic game logic (no DOM / Three.js): board, units, enemies, waves, posture, baton, all-out
   render/   Three.js: toon materials + outlines, arena, models, FX pools, camera rig, post-processing
   ui/       DOM HUD, comic cut-ins (1-MORE, ALL-OUT shatter), SVG silhouettes + comic kit (stars, ink, speedlines, torn paper), CSS
+  assets/   drop-in art manifest + custom/ -> base -> built-in resolver
   main.js   renderer setup, input, game loop, cut-in orchestration
 ```
 

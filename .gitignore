@@ -3,3 +3,9 @@ dist/
 .DS_Store
 *.log
 shots/
+
+# private drop-in art (never committed or deployed from CI)
+public/models/custom/*
+public/portraits/custom/*
+!public/models/custom/.gitkeep
+!public/portraits/custom/.gitkeep

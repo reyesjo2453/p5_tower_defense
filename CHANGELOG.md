@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.0 – Drop-in art pipeline
+
+- **glTF unit models**: `public/models/{jester,queen,oracle}.glb`, with a git-ignored `custom/` override folder.
+  - They are loaded with `GLTFLoader` and cloned per tower with `SkeletonUtils`, each with its own animation mixer for idle and attack clips.
+  - Each model is `Box3`-normalized to 1.8 units with its feet at `y = 0`.
+  - Materials are converted to the toon cel shader, and the ink outline follows skinned meshes.
+- **PNG cut-ins**: per-unit card and cut-in PNGs plus a finisher PNG replace the SVG silhouettes when present.
+- **Fallback chain**: `custom/` → base folder → built-in procedural figures and SVG silhouettes. A build-time asset index (Vite plugin) means no 404 probing, and missing files never break the build.
+- **CC0 placeholder kit**: a rigged faceless mannequin and flat PNGs in `fixtures/placeholder-assets/`.
+  - `npm run assets:placeholder` and `npm run assets:clean` install and remove them.
+  - `npm run smoke:assets` runs the end-to-end check.
+
 ## 1.1.0 – Palace & comic art overhaul
 
 - **Palace environment**:

@@ -84,23 +84,44 @@ function outlineMat(width, color) {
   if (outlineMats.has(key)) return outlineMats.get(key);
   const m = new THREE.MeshBasicMaterial({ color, side: THREE.BackSide });
   m.onBeforeCompile = (sh) => {
-    sh.vertexShader = sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>\ntransformed += normal * ${width.toFixed(4)};`);
+    sh.vertexShader = sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>\ntransformed += normal * ${width.toPrecision(4)};`);
   };
   m.customProgramCacheKey = () => `outline-${width}`;
   outlineMats.set(key, m);
   return m;
 }
 
-/** Add an ink outline shell to every mesh under `root` (skips meshes flagged noOutline). */
-export function outline(root, width = 0.025, color = 0x050507) {
+/**
+ * Add an ink outline shell to every mesh under `root` (skips meshes flagged noOutline).
+ * Skinned meshes get a skinned shell bound to the same skeleton so the ink follows the animation.
+ * With `worldSpace`, `width` is in world units (divided by each mesh's world scale): use it for
+ * imported models whose authoring scale is unknown.
+ */
+export function outline(root, width = 0.025, color = 0x050507, { worldSpace = false } = {}) {
   const meshes = [];
   root.traverse((o) => {
     if (o.isMesh && !o.userData.noOutline && !o.userData.isOutline) meshes.push(o);
   });
+  if (worldSpace) root.updateMatrixWorld(true);
+  const ws = new THREE.Vector3();
   for (const m of meshes) {
-    const shell = new THREE.Mesh(m.geometry, outlineMat(width, color));
+    let w = width;
+    if (worldSpace) {
+      m.matrixWorld.decompose(new THREE.Vector3(), new THREE.Quaternion(), ws);
+      w = width / Math.max(1e-6, (Math.abs(ws.x) + Math.abs(ws.y) + Math.abs(ws.z)) / 3);
+      w = Number(w.toPrecision(3)); // keep the material cache small
+    }
+    let shell;
+    if (m.isSkinnedMesh) {
+      shell = new THREE.SkinnedMesh(m.geometry, outlineMat(w, color));
+      shell.bind(m.skeleton, m.bindMatrix);
+      shell.bindMode = m.bindMode;
+    } else {
+      shell = new THREE.Mesh(m.geometry, outlineMat(w, color));
+    }
     shell.userData.isOutline = true;
     shell.raycast = () => {};
+    shell.castShadow = false;
     m.add(shell);
   }
   return root;

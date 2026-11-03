@@ -36,6 +36,29 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
     await page.touchscreen.tap(pt.x, pt.y);
     await page.waitForTimeout(300);
     ok((await G(() => window.__game.game.units.map((u) => `${u.type}@${u.x},${u.y}`).join())) === 'jester@6,3', 'touch placement on a build plate');
+    if (process.env.SMOKE_ASSETS) {
+      // drop-in pipeline: glTF figure, Box3-normalized to ~1.8 with feet on the plate, animated by its clips
+      await page.waitForFunction(() => window.__game.view.units.size > 0 && [...window.__game.view.units.values()][0].spawnT >= 1, null, { timeout: 20000 });
+      const m = await G(() => {
+        const w = window.__game;
+        const v = [...w.view.units.values()][0];
+        v.model.root.updateMatrixWorld(true);
+        let minY = Infinity, maxY = -Infinity;
+        v.model.root.traverse((o) => {
+          if (!o.isSkinnedMesh || o.userData.isOutline) return;
+          o.computeBoundingBox();
+          const b = o.boundingBox.clone().applyMatrix4(o.matrixWorld);
+          minY = Math.min(minY, b.min.y); maxY = Math.max(maxY, b.max.y);
+        });
+        return { gltf: !!v.model.gltf, mixer: !!v.model.mixer, minY, h: (maxY - minY) / v.model.root.scale.y, base: v.base.y, loaded: w.assets.models.loaded.map((l) => l.id).sort().join(), png: w.assets.portraits.length };
+      });
+      ok(m.loaded === 'jester,oracle,queen', `glTF models loaded (${m.loaded})`);
+      ok(m.gltf && m.mixer, 'placed unit is a SkeletonUtils clone with an animation mixer');
+      ok(Math.abs(m.h - 1.8) < 0.12, `Box3-normalized height ~1.8 (got ${m.h.toFixed(3)})`);
+      ok(Math.abs(m.minY - m.base) < 0.08, `feet grounded on the plate (minY ${m.minY.toFixed(3)} vs plate ${m.base.toFixed(3)})`);
+      ok(m.png === 7, `all 7 portrait PNGs resolved from custom/ (${m.png})`);
+      ok(await G(() => [...document.querySelectorAll('.card .face img')].every((i) => /custom\/\w+-card\.png$/.test(i.src))), 'deploy cards show the card PNGs');
+    }
     await G(() => { const g = window.__game.game; g.cash = 999; g.place('queen', 7, 6); g.place('oracle', 8, 4); });
     await page.tap('.startbtn');
     await page.waitForTimeout(1500);
@@ -43,6 +66,10 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
     await G(() => { const g = window.__game.game; const e = g.enemies[0]; e.posture = 1; g.damage(g.units[0], e, 1, 5); });
     await page.waitForSelector('.onemore', { timeout: 3000 });
     ok(true, '1-MORE screen-slice plays on posture break');
+    if (process.env.SMOKE_ASSETS) {
+      ok(await G(() => /custom\/jester-cutin\.png$/.test(document.querySelector('.onemore .sil').src)), '1-MORE cut-in uses the PNG');
+      ok(await G(() => { const v = [...window.__game.view.units.values()][0]; return v.model.mixer.time > 0; }), 'animation clips advancing');
+    }
     ok(await G(() => window.__game.game.batonPass(window.__game.game.units[1])), 'baton pass');
     await G(() => { const g = window.__game.game; for (let i = 0; i < 3; i++) g.breakPosture(null, g.spawn('mannequin', 'a')); });
     await page.waitForSelector('.allout-btn', { timeout: 3000 });
@@ -51,6 +78,12 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
     ok(true, 'ALL-OUT ATTACK comic panels');
     await page.waitForSelector('.splash', { timeout: 15000 });
     ok(true, 'shatter + ransom-note splash');
+    if (process.env.SMOKE_ASSETS) {
+      ok(await G(() => [...document.querySelectorAll('.allout .panel img')].length === 0 || [...document.querySelectorAll('.allout .panel img')].every((i) => /cutin\.png$/.test(i.src))), 'All-Out panels use the cut-in PNGs');
+      ok(await G(() => /custom\/finisher\.png$/.test(document.querySelector('.splash .hero').src)), 'finisher splash uses the PNG');
+      require('node:fs').mkdirSync(path.join(__dirname, '..', 'shots'), { recursive: true });
+      await page.screenshot({ path: path.join(__dirname, '..', 'shots', 'assets-splash.png') });
+    }
     await page.waitForFunction(() => !window.__game.state.cine, null, { timeout: 30000 });
     ok(await G(() => window.__game.game.downed.length === 0), 'downed Shadows were finished');
     ok(errors.length === 0, `no page/console errors${errors.length ? `: ${errors.join(' | ')}` : ''}`);

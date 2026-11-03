@@ -9,6 +9,8 @@ import { View, CameraRig } from './render/view.js';
 import { Hud } from './ui/hud.js';
 import { buildPalace } from './render/palace.js';
 import { silhouetteURL } from './ui/silhouettes.js';
+import { modelURLs, portraitURLs } from './assets/resolve.js';
+import { loadUnitModels } from './render/gltfUnits.js';
 
 const params = new URLSearchParams(location.search);
 const coarse = matchMedia('(pointer: coarse)').matches;
@@ -57,7 +59,17 @@ ghost.visible = false;
 scene.add(ghost);
 
 // ---------------------------------------------------------------- portraits + HUD
-const portraits = Object.fromEntries(['jester', 'queen', 'oracle', 'leader'].map((id) => [id, silhouetteURL(id)]));
+// drop-in PNGs (public/portraits[/custom]) win; the SVG silhouettes are the built-in fallback
+const portraits = portraitURLs(silhouetteURL);
+for (const key of portraits.png) {
+  const [kind, id] = key.split(':');
+  const img = new Image();
+  img.decoding = 'async';
+  img.src = kind === 'finisher' ? portraits.finisher : portraits[kind][id]; // warm the cache before the first cut-in
+}
+// drop-in glTF unit models (public/models[/custom]); units without one keep their procedural figure
+const assets = { portraits: [...portraits.png], models: null };
+const assetsReady = loadUnitModels(modelURLs()).then((s) => { assets.models = s; });
 const state = { speed: 1, paused: false, cine: false, selected: null, card: null, dragging: false, freezeReq: null, firstBreak: true };
 const hud = new Hud(document.getElementById('ui'), portraits, {
   cardDown(id) {
@@ -233,9 +245,10 @@ function titleScreen() {
     </div>
     <button class="startbtn live" style="position:static;transform:skewX(-12deg)"><span>ENTER</span></button>
     <div class="tag">Unofficial, non-commercial fan showcase inspired by the Persona series' style. Not affiliated with ATLUS or SEGA.
-    All models, designs and code are original.</div>`);
-  ov.querySelector('button').addEventListener('click', () => {
+    Built-in models, designs and code are original.</div>`);
+  ov.querySelector('button').addEventListener('click', async () => {
     ov.remove();
+    await assetsReady; // models are tiny next to the title screen dwell time; never place before they're in
     newGame();
   });
 }
@@ -349,4 +362,4 @@ resize();
 requestAnimationFrame(loop);
 
 // debug / smoke-test handle
-window.__game = { get game() { return game; }, state, hud, view, rig, post, fx, scene, palace, newGame, requestAllOut };
+window.__game = { get game() { return game; }, state, hud, get view() { return view; }, rig, post, fx, scene, palace, assets, assetsReady, newGame, requestAllOut };
