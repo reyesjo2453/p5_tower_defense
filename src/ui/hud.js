@@ -136,6 +136,7 @@ export class Hud {
     this.q('cash').textContent = Math.floor(game.cash);
     this.q('tbar').style.width = `${(game.treasure / game.rules.treasureHp) * 100}%`;
     for (const c of this.deck.children) c.classList.toggle('poor', game.cash < UNITS[c.dataset.unit].cost);
+    this.batonPrompt(game);
     const ready = game.allOutReady && !this.suppress;
     if (ready && !this.allOutBtn) {
       this.allOutBtn = $('<button class="allout-btn live" data-act="allout"><span><small>TAP · FINISHER</small>ALL-OUT ATTACK</span></button>');
@@ -143,6 +144,46 @@ export class Hud {
     } else if (!ready && this.allOutBtn) {
       this.allOutBtn.remove();
       this.allOutBtn = null;
+    }
+  }
+
+  // ---------------------------------------------------------------- Baton Pass prompt (bullet-time)
+  /**
+   * While a Baton Pass window is open: a circular depletion gauge with the seconds left, and a comic
+   * speedline vignette on the screen borders that fades with the bullet-time factor.
+   */
+  batonPrompt(game) {
+    const b = game.baton;
+    if (!this.vignette) {
+      this.vignette = $('<div class="bt-vignette" aria-hidden="true"></div>');
+      this.root.prepend(this.vignette);
+    }
+    const slow = game.rules.bulletTime < 1 ? (1 - game.timeScale) / (1 - game.rules.bulletTime) : 0;
+    this.vignette.style.opacity = String(Math.max(0, Math.min(1, slow)).toFixed(3));
+    this.vignette.style.display = slow > 0.01 ? '' : 'none';
+    if (b && !this.batonEl) {
+      const C = (2 * Math.PI * 26).toFixed(2);
+      this.batonEl = $(`<div class="baton-prompt" role="timer" aria-live="polite">
+        <svg viewBox="0 0 64 64" class="gauge"><circle class="bg" cx="32" cy="32" r="26"/><circle class="fg" cx="32" cy="32" r="26" stroke-dasharray="${C}" stroke-dashoffset="0"/></svg>
+        <b data-bt="secs">3.5</b>
+        <div class="txt"><span>BATON PASS</span><small>TAP AN ALLY</small></div>
+        <i class="bar"><i data-bt="bar"></i></i>
+      </div>`);
+      this.batonEl.dataset.c = C;
+      this.root.appendChild(this.batonEl);
+    } else if (!b && this.batonEl) {
+      const el = this.batonEl;
+      this.batonEl = null;
+      el.classList.add('out');
+      setTimeout(() => el.remove(), 220);
+    }
+    if (b && this.batonEl) {
+      const frac = Math.max(0, Math.min(1, b.t / (b.max || game.rules.batonWindow)));
+      const el = this.batonEl;
+      el.querySelector('.fg').setAttribute('stroke-dashoffset', (el.dataset.c * (1 - frac)).toFixed(2));
+      el.querySelector('[data-bt="secs"]').textContent = Math.max(0, b.t).toFixed(1);
+      el.querySelector('[data-bt="bar"]').style.transform = `scaleX(${frac.toFixed(3)})`;
+      el.classList.toggle('low', frac < 0.3);
     }
   }
 
@@ -211,7 +252,7 @@ export class Hud {
   }
 
   // ---------------------------------------------------------------- 1-MORE screen-slice
-  async oneMore(unitId, chain) {
+  async oneMore(unitId, chain, baton = true) {
     this.root.querySelector('.onemore')?.remove();
     const el = $(`<div class="onemore">
       <div class="back" style="clip-path:${TEX.tornBack}"></div>
@@ -223,7 +264,7 @@ export class Hud {
       <div class="slash"></div>
       <img class="star" alt="" src="${TEX.stars[0]}">
       <div class="badge">1 MORE!</div>
-      <div class="sub">${chain > 1 ? `CHAIN ×${chain} · ` : ''}BATON READY</div>
+      <div class="sub">${chain > 1 ? `CHAIN ×${chain} · ` : ''}${baton ? 'BATON READY' : 'ACT AGAIN'}</div>
     </div>`);
     this.root.appendChild(el);
     await wait(900);

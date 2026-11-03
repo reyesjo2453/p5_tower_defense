@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.5.0 – Close-up camera, bullet-time Baton Pass, 2.5D combat feel
+
+- **Camera** (`view.js` `CameraRig`):
+  - The default shot sits ~30% closer than the whole-board fit, and the lens stays in the 32–40° range.
+    On narrow screens the camera backs off rather than widening the FOV, and the haze thins to match.
+  - Players can zoom with the wheel, a pinch or `+`/`-`, and pan with a two-finger or right-mouse drag
+    or the arrow keys. Dragging a card to a screen edge also pans, and `0` resets the shot.
+  - Zoom and pan are damped, clamped to the board and kept above a minimum distance from the floor.
+  - When nobody has steered the camera for 4 s, it drifts toward the leading Shadows.
+- **Bullet-time Baton Pass** (`sim/game.js`):
+  - A Baton Pass prompt eases the simulation to 0.25× and back out again afterwards.
+  - The prompt lasts 3.5 s of real time. A circular gauge and a bar show the time left, and both
+    flash red near the end.
+  - Comic speedlines frame the screen borders while time is slowed.
+  - Each runway has a 9 s cooldown before it can open another prompt. A posture break during the
+    cooldown still grants the 1-MORE.
+- **Billboard attack state machine** (`spriteUnits.js`): IDLE → ANTICIPATE → LUNGE → HIT_STOP →
+  OVERSHOOT_RECOIL.
+  - ANTICIPATE (70 ms): crouch to 1.16 × 0.84 and lean back by −0.12 rad.
+  - LUNGE (80 ms): an explosive snap of ~0.4 units toward the target.
+  - HIT_STOP (60 ms): the attacker and its target freeze on the contact frame.
+  - OVERSHOOT_RECOIL (140 ms): a damped spring back to the plate that dips slightly past rest.
+- **Impact** (`combatEffects.js`):
+  - The struck Shadow flashes over-bright white (`setRGB(2, 2, 2)`) for 35 ms.
+  - Each landed melee hit kicks the camera 0.05 units along the attack direction, decaying over 90 ms.
+  - A Shadow killed mid-lunge stays on the board until the blow lands.
+- **Floating combat text** (`combatText.js`):
+  - Damage numbers pop up with an elastic bounce, arc outward and fade over 650 ms. Physical hits
+    are yellow/white and Oracle's are orange/red. A green heal style exists but nothing uses it yet.
+  - **CRITICAL!** marks a hit on a downed Shadow, and **WEAK!** marks posture damage into an Oracle mark.
+- **Threat ring**: tapping a placed unit projects a spinning, neon, dashed range ring onto the floor tiles.
+
 ## 1.4.0 – Clean billboards, combat cycle, BGM & SFX
 
 - **Deploy cards**: the name, ¥ cost and role badge now sit in the bottom quarter over a dark,

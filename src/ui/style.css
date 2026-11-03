@@ -235,3 +235,55 @@ button { font-family: var(--display); cursor: pointer; border: 0; color: inherit
   .deploy .lines, .deploy .bit { animation: none; }
   .deploy .bit { display: none; }
 }
+
+/* ---------------------------------------------------------------- combat text (render/combatText.js) */
+.ctext { position: absolute; inset: 0; pointer-events: none; z-index: 15; overflow: hidden; }
+.ctext > div { position: absolute; left: 0; top: 0; will-change: transform, opacity; white-space: nowrap; }
+.ctext .dmg { font: 400 30px/1 'Anton', Impact, sans-serif; letter-spacing: 1px; font-style: italic; -webkit-text-stroke: 5px #050505; paint-order: stroke fill; text-shadow: 3px 3px 0 #050505; }
+.ctext .dmg.physical { color: #fff6b8; text-shadow: 3px 3px 0 #050505, 0 0 10px rgba(255, 230, 0, .55); }
+.ctext .dmg.magic { color: #ff7a1a; text-shadow: 3px 3px 0 #a8001f, 0 0 10px rgba(255, 90, 20, .6); }
+.ctext .dmg.heal { color: #39ff88; text-shadow: 3px 3px 0 #050505, 0 0 10px rgba(57, 255, 136, .6); }
+.ctext .dmg.big { font-size: 40px; color: #ffe600; }
+.ctext .dmg.magic.big { color: #ff3b1a; }
+.ctext .callout { font: 400 24px/1 'Anton', Impact, sans-serif; font-style: italic; letter-spacing: 1.5px; }
+.ctext .callout span { display: inline-block; padding: 4px 12px 2px; border: 3px solid #050505; transform: skewX(-12deg) rotate(-6deg); box-shadow: 4px 4px 0 #050505; }
+.ctext .callout.weak span { background: #39ff88; color: #050505; }
+.ctext .callout.crit span { background: #e8002d; color: #fff; -webkit-text-stroke: 1px #050505; box-shadow: 4px 4px 0 #050505, 0 0 16px rgba(232, 0, 45, .6); }
+
+/* ---------------------------------------------------------------- Baton Pass prompt + bullet-time vignette */
+.bt-vignette { position: absolute; inset: -12%; pointer-events: none; opacity: 0;
+  background:
+    repeating-conic-gradient(from 0deg at 50% 50%, transparent 0deg 4deg, rgba(255,255,255,.55) 4deg 4.6deg, transparent 4.6deg 9deg),
+    radial-gradient(ellipse at center, transparent 55%, rgba(5,5,5,.7) 92%);
+  -webkit-mask-image: radial-gradient(ellipse at center, transparent 48%, #000 80%); mask-image: radial-gradient(ellipse at center, transparent 48%, #000 80%);
+  animation: btjit .14s steps(2) infinite; }
+@keyframes btjit { 0% { transform: rotate(0deg); } 100% { transform: rotate(1.4deg); } }
+.baton-prompt { position: absolute; left: 50%; top: calc(98px + var(--safe-t)); transform: translateX(-50%) skewX(-10deg); display: flex; align-items: center; gap: 10px; padding: 6px 18px 8px 8px; background: rgba(5,5,5,.9); border: 3px solid #fff; box-shadow: 6px 6px 0 var(--red); animation: btin .3s cubic-bezier(.2,1.6,.4,1) both; pointer-events: none; }
+@keyframes btin { from { transform: translateX(-50%) skewX(-10deg) scale(0); } }
+.baton-prompt .gauge { width: 56px; height: 56px; transform: rotate(-90deg) skewX(10deg); flex: none; }
+.baton-prompt .gauge circle { fill: none; stroke-width: 7; }
+.baton-prompt .gauge .bg { stroke: rgba(255,255,255,.18); }
+.baton-prompt .gauge .fg { stroke: #ffe600; stroke-linecap: butt; filter: drop-shadow(0 0 4px rgba(255,230,0,.8)); }
+.baton-prompt > b { position: absolute; left: 8px; width: 56px; text-align: center; font: 400 20px/1 'Anton', Impact, sans-serif; color: #fff; transform: skewX(10deg); }
+.baton-prompt .txt { display: flex; flex-direction: column; transform: skewX(10deg); }
+.baton-prompt .txt span { font: 400 30px/1 'Anton', Impact, sans-serif; font-style: italic; color: #ffe600; -webkit-text-stroke: 1px #050505; letter-spacing: 1px; }
+.baton-prompt .txt small { font: 400 15px/1.1 'Bebas Neue', Impact, sans-serif; letter-spacing: 3px; color: #fff; }
+.baton-prompt .bar { position: absolute; left: 0; right: 0; bottom: -3px; height: 5px; background: rgba(255,255,255,.15); }
+.baton-prompt .bar > i { display: block; height: 100%; background: #ffe600; transform-origin: left; }
+.baton-prompt.low .gauge .fg, .baton-prompt.low .bar > i { stroke: #ff1a3d; background: #ff1a3d; }
+.baton-prompt.low { animation: btin .3s cubic-bezier(.2,1.6,.4,1) both, btlow .3s steps(2) infinite; }
+@keyframes btlow { 50% { box-shadow: 6px 6px 0 #fff; } }
+.baton-prompt.out { transition: opacity .2s, transform .2s; opacity: 0; transform: translateX(-50%) skewX(-10deg) scale(.8); }
+@media (max-width: 620px), (max-height: 500px) {
+  .ctext .dmg { font-size: 22px; -webkit-text-stroke-width: 4px; }
+  .ctext .dmg.big { font-size: 30px; }
+  .ctext .callout { font-size: 18px; }
+  .baton-prompt { top: calc(84px + var(--safe-t)); padding: 4px 12px 6px 6px; }
+  .baton-prompt .gauge { width: 44px; height: 44px; }
+  .baton-prompt > b { left: 6px; width: 44px; font-size: 16px; }
+  .baton-prompt .txt span { font-size: 22px; }
+  .baton-prompt .txt small { font-size: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bt-vignette, .baton-prompt.low { animation: none; }
+}

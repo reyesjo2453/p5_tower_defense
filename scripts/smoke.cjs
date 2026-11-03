@@ -31,6 +31,17 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
     await page.tap('.overlay .startbtn');
     await page.waitForFunction(() => window.__game.rig.est === 0, null, { timeout: T(20000) });
     ok(true, 'establishing shot glides into the battle camera');
+    // close-up framing: ~30% nearer than the fitted whole-board distance, FOV in the tight 32-34 range
+    // on this landscape phone; the wheel zooms through a damped goal, clamped above the floor
+    const cam = await G(() => { const r = window.__game.rig; return { user: r.user, fov: r.fitFov, d: r.camera.position.distanceTo(r._look), base: r.baseDist }; });
+    ok(cam.user < 0.75 && cam.d < cam.base * 0.75 && cam.fov <= 40, `closer default framing (zoom ${cam.user.toFixed(2)}, ${cam.d.toFixed(2)} of ${cam.base.toFixed(2)} units, fov ${cam.fov})`);
+    // (mobile emulation has no mouse wheel, so dispatch the events the canvas listens for)
+    await G(() => { for (let i = 0; i < 12; i++) document.getElementById('gl').dispatchEvent(new WheelEvent('wheel', { deltaY: -120, cancelable: true })); });
+    await page.waitForFunction(() => window.__game.rig.user <= 0.43, null, { timeout: T(15000) });
+    const near = await G(() => { const r = window.__game.rig; return { d: r.camera.position.distanceTo(r._look), goal: r.userGoal }; });
+    ok(near.goal >= 0.42 && near.d >= 4.59 && near.d < cam.d * 0.7, `wheel zooms in smoothly and clamps (zoom ${near.goal.toFixed(2)}, ${near.d.toFixed(2)} units)`);
+    await G(() => window.__game.rig.resetView());
+    await page.waitForFunction(() => Math.abs(window.__game.rig.user - 0.7) < 0.01, null, { timeout: T(10000) });
     await page.tap('[data-unit="jester"]');
     const pt = await G(() => {
       const w = window.__game;
@@ -125,15 +136,33 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
     await page.tap('.startbtn');
     await page.waitForFunction(() => window.__game.game.state === 'running' && window.__game.game.enemies.length > 0, null, { timeout: T(10000) }).catch(() => {});
     ok(await G(() => window.__game.game.state === 'running' && window.__game.game.enemies.length > 0), 'wave 1 marches');
-    if (await G(() => [...window.__game.view.units.values()].some((v) => v.model.sprite))) {
-      // swiftshader runs the game far below real time, so feed one attack event instead of waiting
-      await G(() => { const w = window.__game, g = w.game; const u = g.units.find((x) => w.view.unitView(x)?.model.sprite); w.view.onEvent({ t: 'attack', unit: u, enemy: g.enemies[0] }); });
+    // swiftshader runs the game far below real time, so feed one attack + its hit instead of waiting
+    const sprite = await G(() => [...window.__game.view.units.values()].some((v) => v.model.sprite));
+    await G(() => {
+      const w = window.__game, g = w.game;
+      const u = g.units.find((x) => w.view.unitView(x)?.model.sprite) ?? g.units.find((x) => x.type !== 'oracle');
+      w.view.onEvent({ t: 'attack', unit: u, enemy: g.enemies[0] });
+      w.view.onEvent({ t: 'hit', unit: u, enemy: g.enemies[0], dmg: 42, weak: true, crit: false });
+    });
+    if (sprite) {
+      ok(await G(() => [...window.__game.view.units.values()].some((v) => v.model.state === 'ANTICIPATE')), 'attack enters ANTICIPATE (crouch + lean back)');
       await page.waitForFunction(() => window.__game.view.stats.impacts > 0, null, { timeout: T(15000) });
-      ok(true, 'billboard attack cycle reaches its impact frame (lunge -> burst)');
+      ok(await G(() => window.__game.view.stats.hitStops > 0), 'billboard reaches HIT_STOP: hits land at the impact frame and freeze the target');
     }
+    await page.waitForFunction(() => window.__game.view.stats.flashes > 0, null, { timeout: T(15000) });
+    ok(true, 'struck Shadow flashes white');
+    ok(await G(() => { const t = window.__game.ctext; return t.count.damage > 0 && t.count.callout > 0; }), 'floating damage number + WEAK! callout spawn');
+    // tapping a placed unit projects its neon dashed threat ring
+    await G(() => window.__game.select(window.__game.game.units[0]));
+    await page.waitForFunction(() => window.__game.view.unitView(window.__game.game.units[0]).ring.userData.opacity() > 0.5, null, { timeout: T(10000) });
+    ok(true, 'selected unit shows its dashed range ring');
+    await G(() => window.__game.select(null));
     await G(() => { const g = window.__game.game; const e = g.enemies[0]; e.posture = 1; g.damage(g.units[0], e, 1, 5); });
     await page.waitForSelector('.onemore', { timeout: T(3000) });
     ok(true, '1-MORE screen-slice plays on posture break');
+    await page.waitForSelector('.baton-prompt', { timeout: T(5000) });
+    await page.waitForFunction(() => window.__game.game.timeScale < 0.5, null, { timeout: T(15000) });
+    ok(await G(() => +document.querySelector('.bt-vignette').style.opacity > 0.3 && window.__game.game.baton.t <= 3.5), `bullet-time: sim at ${(await G(() => window.__game.game.timeScale)).toFixed(2)}x, gauge + speedline vignette up`);
     if (process.env.SMOKE_ASSETS) {
       ok(await G(() => /custom\/jester-cutin\.png$/.test(document.querySelector('.onemore .sil').src)), '1-MORE cut-in uses the PNG');
       ok(await G(() => { const v = [...window.__game.view.units.values()][0]; return v.model.mixer.time > 0; }), 'animation clips advancing');

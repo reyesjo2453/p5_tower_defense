@@ -13,6 +13,7 @@ import { modelURLs, portraitURLs, spriteURLs } from './assets/resolve.js';
 import { loadUnitModels, hasUnitModel } from './render/gltfUnits.js';
 import { loadUnitSprites } from './render/spriteUnits.js';
 import { createAudio } from './audio/index.js';
+import { CombatText } from './render/combatText.js';
 
 const params = new URLSearchParams(location.search);
 const coarse = matchMedia('(pointer: coarse)').matches;
@@ -49,7 +50,9 @@ const post = createPost(renderer, scene, camera, { quality: quality === 'low' ? 
 const fx = new Fx(scene);
 // BGM and SFX live on separate buses; the soundtrack starts on the first gesture and never restarts
 const audio = createAudio();
-let view = new View(scene, fx, rig, audio.sfx);
+// floating damage numbers + WEAK!/CRITICAL! badges, projected over the canvas
+const ctext = new CombatText(document.getElementById('app'), camera);
+let view = new View(scene, fx, rig, audio.sfx, ctext);
 
 // placement ghost: range ring + glowing plate following the finger
 const ghost = new THREE.Group();
@@ -167,15 +170,78 @@ function tryPlace(tile) {
   return false;
 }
 
+// ---------------------------------------------------------------- camera framing input
+// wheel / pinch zoom (damped in the rig), two-finger drag or right/middle-drag to pan, edge-pan while
+// dragging a card, +/- and 0 on the keyboard. A pinch cancels the tap it started with.
+const touches = new Map(); // pointerId -> {x, y}
+let pinch = null; // { d, mx, my }
+let dragPan = null; // { x, y } for right / middle mouse drag
+function pinchState() {
+  const [a, b] = [...touches.values()];
+  return { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+}
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  if (state.cine) return;
+  const px = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+  rig.zoomBy(Math.exp(THREE.MathUtils.clamp(px, -120, 120) * 0.0011)); // trackpads send many small steps
+}, { passive: false });
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
 let downAt = null;
 window.addEventListener('pointermove', (e) => {
+  if (touches.has(e.pointerId)) {
+    touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && touches.size === 2) {
+      const n = pinchState();
+      if (n.d > 10 && pinch.d > 10) rig.zoomBy(Math.pow(pinch.d / n.d, 1.15));
+      rig.panBy(n.mx - pinch.mx, n.my - pinch.my, canvas.clientHeight);
+      pinch = n;
+      return;
+    }
+  }
+  if (dragPan) {
+    rig.panBy(e.clientX - dragPan.x, e.clientY - dragPan.y, canvas.clientHeight);
+    dragPan = { x: e.clientX, y: e.clientY };
+    return;
+  }
   if (state.card) showGhost(tileAt(e.clientX, e.clientY));
+  if (state.dragging && state.card) {
+    // dragging a card toward a screen edge slides the shot that way so far plates stay reachable
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    const ex = e.clientX < w * 0.08 ? -1 : e.clientX > w * 0.92 ? 1 : 0;
+    const ey = e.clientY < h * 0.14 ? -1 : 0;
+    if (ex || ey) rig.panBy(-ex * 9, -ey * 9, h);
+  }
 });
 canvas.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'touch') {
+    touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (touches.size === 2 && !state.dragging) {
+      pinch = pinchState();
+      downAt = null; // a pinch is never a tap
+      return;
+    }
+  }
+  if (e.button === 1 || e.button === 2) {
+    dragPan = { x: e.clientX, y: e.clientY };
+    return;
+  }
   downAt = { x: e.clientX, y: e.clientY };
   if (state.card) showGhost(tileAt(e.clientX, e.clientY));
 });
+const endTouch = (e) => {
+  touches.delete(e.pointerId);
+  if (touches.size < 2) pinch = null;
+};
+window.addEventListener('pointercancel', endTouch);
 window.addEventListener('pointerup', (e) => {
+  endTouch(e);
+  if (dragPan) {
+    dragPan = null;
+    return;
+  }
+  if (pinch || touches.size) return; // still mid-gesture
   if (state.cine) return;
   const overCanvas = e.target === canvas;
   const tile = overCanvas ? tileAt(e.clientX, e.clientY) : null;
@@ -202,6 +268,13 @@ window.addEventListener('pointerup', (e) => {
 window.addEventListener('keydown', (e) => {
   if (e.key === ' ') togglePause();
   else if (e.key === 'a' || e.key === 'A') requestAllOut();
+  else if (e.key === '+' || e.key === '=') rig.zoomBy(0.88);
+  else if (e.key === '-' || e.key === '_') rig.zoomBy(1 / 0.88);
+  else if (e.key === '0') rig.resetView();
+  else if (e.key.startsWith('Arrow')) {
+    const k = { ArrowLeft: [40, 0], ArrowRight: [-40, 0], ArrowUp: [0, 40], ArrowDown: [0, -40] }[e.key];
+    rig.panBy(k[0], k[1], canvas.clientHeight);
+  }
   else if (e.key === 'Escape') {
     state.card = null;
     hud.setSelectedCard(null);
@@ -212,12 +285,12 @@ window.addEventListener('keydown', (e) => {
 document.addEventListener('visibilitychange', () => document.hidden && game.state === 'running' && togglePause(true));
 
 // ---------------------------------------------------------------- cut-ins
-async function playOneMore(unit, chain) {
+async function playOneMore(unit, chain, baton) {
   if (state.cine) return;
-  hud.oneMore(unit.type, chain);
-  if (state.firstBreak) {
+  hud.oneMore(unit.type, chain, baton);
+  if (baton && state.firstBreak) {
     state.firstBreak = false;
-    hud.hint('POSTURE BREAK! Tap another unit within 3s to BATON PASS the momentum.', 4200);
+    hud.hint('POSTURE BREAK! Time slows: tap another unit before the gauge empties to BATON PASS.', 4200);
   }
 }
 
@@ -239,10 +312,10 @@ async function runAllOut(frame) {
 
 // ---------------------------------------------------------------- flow
 function newGame() {
-  for (const u of [...game.units]) view.removeUnit(u);
-  for (const e of [...game.enemies]) view.removeEnemy(e, 'leak');
+  view.clear();
   game = new Game();
-  view = new View(scene, fx, rig, audio.sfx);
+  view = new View(scene, fx, rig, audio.sfx, ctext);
+  rig.resetView();
   state.speed = 1;
   hud.setSpeed(1);
   togglePause(false);
@@ -283,7 +356,7 @@ function onEvents(events) {
         hud.centerMsg(ev.boss ? 'CURTAIN CALL' : `WAVE ${ev.n}`, 1500);
         break;
       case 'oneMore':
-        playOneMore(ev.unit, ev.chain);
+        playOneMore(ev.unit, ev.chain, ev.baton);
         break;
       case 'break':
         post.halftone.uniforms.uAberration.value = 1;
@@ -325,6 +398,8 @@ function resize() {
   const deck = document.querySelector('.deck');
   const deckH = deck ? h - deck.getBoundingClientRect().top + 6 : 130;
   rig.fit(w, h, w < 620 || h < 500 ? 46 : 60, Math.min(deckH, h * 0.4));
+  // when a narrow screen makes the camera back off, thin the haze so the board doesn't fog over
+  scene.fog.density = 0.025 * Math.min(1, 13 / (rig.baseDist * 0.85));
   post.setSize(w, h, pixelRatio);
 }
 window.addEventListener('resize', resize);
@@ -341,6 +416,27 @@ function adapt(raw) {
   }
 }
 
+// auto-framing target: half-way between the board centre and the marching Shadows (the leading one
+// counts double), so a close camera keeps the fight in shot without the player steering
+const _follow = new THREE.Vector3();
+function frameAction() {
+  if (state.dragging) return; // never slide the shot under a finger that is placing a card
+  _follow.set(0, 0, 0);
+  let n = 0, lead = null;
+  for (const e of game.enemies) {
+    _follow.x += e.x - 5;
+    _follow.z += e.y - 5;
+    n++;
+    if (!lead || e.walked > lead.walked) lead = e;
+  }
+  if (lead) {
+    _follow.x += 2 * (lead.x - 5);
+    _follow.z += 2 * (lead.y - 5);
+    _follow.multiplyScalar(0.5 / (n + 2));
+  }
+  rig.setFollow(_follow);
+}
+
 // ---------------------------------------------------------------- loop
 const clock = new THREE.Clock();
 let t = 0;
@@ -351,13 +447,18 @@ function loop() {
   const dt = Math.min(0.05, raw);
   t += dt;
   const frozen = state.cine || state.paused;
+  // a Baton Pass prompt runs in bullet-time on wall-clock time, so 2x speed doesn't shorten it
+  const steps = game.baton ? 1 : state.speed;
   if (!frozen) {
-    for (let i = 0; i < state.speed; i++) game.update(dt);
+    for (let i = 0; i < steps; i++) game.update(dt);
     onEvents(game.drain());
   }
-  // hit-stop: the world (and FX) freeze for the 80 ms after a posture break
+  // hit-stop: the world (and FX) freeze for the 80 ms after a posture break; bullet-time slows the
+  // view by the same eased factor as the sim so animations, FX and numbers all go slow-mo together
   const stopped = game.hitStop > 0;
-  const vdt = frozen || stopped ? 0 : dt * state.speed;
+  const vdt = frozen || stopped ? 0 : dt * steps * game.timeScale;
+  view.combat.update(frozen ? 0 : dt);
+  frameAction();
   if (!state.cine) view.update(vdt, game, camera, state.selected);
   fx.update(state.cine && !state.freezeReq ? dt * 0.6 : vdt);
   arena.update(t, !!state.card);
@@ -384,4 +485,4 @@ resize();
 requestAnimationFrame(loop);
 
 // debug / smoke-test handle
-window.__game = { get game() { return game; }, state, hud, audio, get view() { return view; }, rig, post, fx, scene, palace, assets, assetsReady, newGame, requestAllOut };
+window.__game = { get game() { return game; }, state, hud, audio, get view() { return view; }, rig, post, fx, scene, palace, assets, assetsReady, newGame, requestAllOut, select, ctext };

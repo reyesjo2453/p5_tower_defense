@@ -1,5 +1,6 @@
 // 2D billboard units: a standing PNG becomes a camera-facing paper cut-out on its plate, with an
-// ink + paper border, a breathing idle, a drop-in deploy, a lunge/impact/recoil attack cycle, a soft
+// ink + paper border, a breathing idle, a drop-in deploy, a spring-eased attack state machine
+// (IDLE -> ANTICIPATE -> LUNGE -> HIT_STOP -> OVERSHOOT_RECOIL -> IDLE), a soft
 // ground shadow that breathes with it and a flat ink silhouette shadow on the floor.
 // Card-style art with a black backdrop is keyed first (keyout.js) so only the figure stands up.
 // Used for units that have a sprite (or cut-in) PNG but no .glb; units with neither keep the
@@ -138,16 +139,34 @@ export function spriteStatus() {
 const _v = new THREE.Vector3();
 const _r = new THREE.Vector3();
 
-// combat cycle timings (seconds): lunge -> impact (squash + flash) -> recoil with a settling bounce
+// deploy drop
 const DROP = 0.18, DROP_H = 2.0;
-const LUNGE = 0.08, IMPACT = 0.04, RECOIL = 0.12;
-const ease = (k) => 1 - (1 - k) * (1 - k);
+// attack state machine (seconds): crouch/lean back -> explosive snap -> frozen contact -> spring home
+export const ATTACK = { ANTICIPATE: 0.07, LUNGE: 0.08, HIT_STOP: 0.06, OVERSHOOT_RECOIL: 0.14 };
+const T_LUNGE = ATTACK.ANTICIPATE;
+const T_STOP = T_LUNGE + ATTACK.LUNGE;
+const T_RECOIL = T_STOP + ATTACK.HIT_STOP;
+const T_END = T_RECOIL + ATTACK.OVERSHOOT_RECOIL;
+const easeOut2 = (k) => 1 - (1 - k) * (1 - k);
+const easeOutExpo = (k) => (k >= 1 ? 1 : 1 - Math.pow(2, -10 * k));
+// damped harmonic spring from 1 to 0 over k = 0..1: dips ~10% past rest (backward), settles at 0
+const spring01 = (k) => Math.exp(-3 * k) * Math.cos(1.5 * Math.PI * k);
+
+/** Which attack state a billboard is in, `atk` seconds after the attack started (-1 = idle). */
+export function attackState(atk) {
+  if (atk < 0 || atk >= T_END) return 'IDLE';
+  if (atk < T_LUNGE) return 'ANTICIPATE';
+  if (atk < T_STOP) return 'LUNGE';
+  if (atk < T_RECOIL) return 'HIT_STOP';
+  return 'OVERSHOOT_RECOIL';
+}
 
 /**
  * A fresh billboard for one tower: { root, parts: { body, art, shadow, ink }, height, sprite: true,
- * tick(t, dt, camera, atkDir) -> 'land' | 'impact' | 'land+impact' | null, playAttack(reach), dispose() }.
- * view.js resets root.position to the plate every frame and then calls tick(), which adds the drop,
- * lunge and idle on top and reports the landing / impact moments so the view can fire FX and SFX.
+ * tick(t, dt, camera, atkDir) -> 'land' | 'impact' | 'land+impact' | null, playAttack(reach), state,
+ * dispose() }. view.js resets root.position to the plate every frame and then calls tick(), which adds
+ * the drop, lunge and idle on top and reports the landing / impact (hit-stop entry) moments so the
+ * view can fire FX and SFX.
  */
 export function instantiateSprite(id) {
   const t = templates.get(id);
@@ -198,13 +217,15 @@ export function instantiateSprite(id) {
   let mirror = 1;
   let drop = 0;      // 0..DROP while falling in, then DROP
   let atk = -1;      // seconds since the current attack started, -1 when idle
-  let reach = tw.lunge ?? 0.35;
+  let reach = tw.lunge ?? 0.4;
+  let breathT = 0;
   return {
     root,
     parts: { body, art, shadow, ink },
     height,
     sprite: true,
     get landed() { return drop >= DROP; },
+    get state() { return attackState(atk); },
     tick(time, dt, camera, atkDir) {
       let event = null;
       // yaw-only billboard toward the camera
@@ -226,39 +247,48 @@ export function instantiateSprite(id) {
         if (drop >= DROP) event = 'land';
       }
 
-      // combat cycle: lunge -> impact -> recoil
+      // attack state machine: ANTICIPATE (crouch, lean back) -> LUNGE (explosive snap) -> HIT_STOP
+      // (frozen on contact) -> OVERSHOOT_RECOIL (damped spring home, dipping slightly backward)
       let lunge = 0, sx = 1, sy = 1, lean = 0, flash = 0;
       if (atk >= 0) {
         const before = atk;
         atk += dt;
-        if (before < LUNGE && atk >= LUNGE) event = event ? `${event}+impact` : 'impact'; // even on a long frame
-        if (atk < LUNGE) {
-          const k = ease(atk / LUNGE);
-          lunge = reach * k;
-          sx = 1 - 0.05 * k;
-          sy = 1 + 0.06 * k;
-          lean = 0.14 * k;
-        } else if (atk < LUNGE + IMPACT) {
+        if (before < T_STOP && atk >= T_STOP) event = event ? `${event}+impact` : 'impact'; // even on a long frame
+        if (atk < T_LUNGE) {
+          const k = easeOut2(atk / T_LUNGE);
+          sx = 1 + 0.16 * k;
+          sy = 1 - 0.16 * k;
+          lean = -0.12 * k;
+          lunge = -0.04 * reach * k; // a hair of wind-up backward
+        } else if (atk < T_STOP) {
+          const k = easeOutExpo((atk - T_LUNGE) / ATTACK.LUNGE);
+          lunge = reach * (k * 1.04 - 0.04);
+          sx = 1.16 - 0.26 * k; // stretch along the dash
+          sy = 0.84 + 0.3 * k;
+          lean = -0.12 + 0.28 * k;
+        } else if (atk < T_RECOIL) {
+          // hit-stop: hold the contact pose (impact squash), no breathing, no motion
           lunge = reach;
           sx = 1.15;
           sy = 0.85;
-          lean = 0.08;
+          lean = 0.16;
           flash = 1;
-        } else if (atk < LUNGE + IMPACT + RECOIL) {
-          const k = (atk - LUNGE - IMPACT) / RECOIL;
-          lunge = reach * (1 - k) * (1 - k);
-          const settle = Math.sin(k * Math.PI * 2) * (1 - k); // light bounce as it settles
-          sx = 1 + 0.15 * (1 - k) * (1 - k) - settle * 0.04;
-          sy = 1 - 0.15 * (1 - k) * (1 - k) + settle * 0.05;
-          lean = 0.08 * (1 - k);
+        } else if (atk < T_END) {
+          const f = spring01((atk - T_RECOIL) / ATTACK.OVERSHOOT_RECOIL);
+          lunge = reach * f;
+          sx = 1 + 0.15 * f;
+          sy = 1 - 0.15 * f;
+          lean = 0.16 * f;
         } else {
           atk = -1;
         }
       }
+      const stopped = attackState(atk) === 'HIT_STOP';
       if (lunge) root.position.addScaledVector(atkDir, lunge);
 
       // breathing idle: vertical bob + a small scale pulse, shadow shrinks/fades as the body rises
-      const s = Math.sin(time * 3.0 + offset);
+      if (!stopped) breathT += dt; // hit-stop freezes the idle too
+      const s = Math.sin(breathT * 3.0 + offset);
       body.position.y = fall + s * breath;
       body.scale.set(mirror * sx, (1 + s * 0.02) * sy, 1);
       body.rotation.z = -mirror * lean;
@@ -271,7 +301,7 @@ export function instantiateSprite(id) {
       art.material.color.setScalar(1 + flash * 0.75); // brief hit flash
       return event;
     },
-    /** Start a lunge -> impact -> recoil cycle; `dist` = how far to dash toward the target. */
+    /** Start an ANTICIPATE -> LUNGE -> HIT_STOP -> OVERSHOOT_RECOIL cycle; `dist` = dash length. */
     playAttack(dist) {
       if (dist != null) reach = dist;
       atk = 0;

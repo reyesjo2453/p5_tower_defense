@@ -56,7 +56,10 @@ export const RULES = {
   downTime: 2.6, // seconds an enemy stays broken
   downDmgMul: 1.5,
   hitStop: 0.08, // posture-break freeze
-  batonWindow: 3.5,
+  batonWindow: 3.5, // real seconds the Baton Pass prompt stays up (it runs on unscaled time)
+  batonCooldown: 9, // per lane (runway): a fresh prompt from the same lane waits this long
+  bulletTime: 0.25, // sim speed while a Baton Pass prompt is open
+  bulletEase: 10, // 1/s: how fast the sim eases into / out of bullet-time
   baton: { t: 6, dmgMul: 1.5, postureMul: 1.5, intervalMul: 0.6 },
   allOutDowned: 3, // downed enemies needed (or a downed boss)
   allOutDmg: 520,
