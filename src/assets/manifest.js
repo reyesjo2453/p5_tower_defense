@@ -75,5 +75,9 @@ export const SPRITE_KEY = { mode: 'auto', threshold: 18 };
 // figure), face ('right' | 'left': mirror toward the target), breath (bob amplitude, default
 // 0.04), lunge (attack dash, default 0.35), key ({ mode, threshold, close, sever } overriding SPRITE_KEY) }.
 export const SPRITE_TWEAKS = {
+  // the pose art (public/portraits/<alias>-idle|windup|strike.png) faces right: mirror toward the target
+  jester: { face: 'right' },
+  queen: { face: 'right' },
+  oracle: { face: 'right', height: 1.65 },
   prompter: { height: 1.35 }, // a cat-sized Phantom
 };

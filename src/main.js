@@ -90,7 +90,10 @@ const assetsReady = loadUnitModels(modelURLs())
   .then((s) => {
     assets.models = s;
     const urls = Object.fromEntries(Object.entries(spriteURLs()).filter(([id]) => !hasUnitModel(id)));
-    return loadUnitSprites(urls, poseURLs());
+    // pose art in the base folder never overrides a sprite / cut-in dropped into custom/
+    const poses = poseURLs();
+    for (const id of Object.keys(poses)) if (/\/custom\//.test(urls[id] ?? '') && !/\/custom\//.test(poses[id].idle ?? '')) delete poses[id];
+    return loadUnitSprites(urls, poses);
   })
   .then((s) => { assets.sprites = s; });
 const state = { speed: 1, paused: false, cine: false, selected: null, card: null, dragging: false, freezeReq: null, firstBreak: true, moving: null, unitDrag: null };

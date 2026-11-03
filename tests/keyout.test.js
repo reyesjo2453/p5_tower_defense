@@ -73,3 +73,20 @@ test('keyOut isolates the figure from speedlines, edge shards and floating fragm
   assert.equal(a(100, 250), 0, 'edge shard dropped');
   assert.equal(a(175, 25), 0, 'floating fragment dropped');
 });
+
+test('cleanPose keeps the figure and its effects, drops sheet leftovers below the feet and edge slivers', async () => {
+  const { cleanPose } = await import('../src/render/keyout.js');
+  const w = 120, h = 140;
+  const d = new Uint8ClampedArray(w * h * 4);
+  const box = (x0, y0, x1, y1) => { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) d[(y * w + x) * 4 + 3] = 255; };
+  box(40, 20, 80, 100); // figure, feet at row 100
+  box(90, 30, 96, 36); // a spark near the fist (kept)
+  box(50, 110, 70, 125); // next row's head below the feet (dropped)
+  box(0, 60, 2, 63); // sliver on the left edge (dropped)
+  const r = cleanPose(d, w, h);
+  assert.equal(r.removed, 2);
+  assert.deepEqual(r.main, { x0: 40, y0: 20, x1: 80, y1: 100 });
+  assert.equal(r.bbox.x1, 96, 'the spark stays');
+  assert.equal(d[(115 * w + 60) * 4 + 3], 0, 'leftover head cleared');
+  assert.equal(d[(61 * w + 1) * 4 + 3], 0, 'edge sliver cleared');
+});

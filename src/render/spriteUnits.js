@@ -7,7 +7,7 @@
 // procedural figure from models.js.
 import * as THREE from 'three';
 import { SPRITE_HEIGHT, SPRITE_TWEAKS, SPRITE_KEY } from '../assets/manifest.js';
-import { keyOut, needsKey } from './keyout.js';
+import { keyOut, needsKey, cleanPose } from './keyout.js';
 
 /** Loaded templates by unit id: { texture, aspect, height, tw }. */
 const templates = new Map();
@@ -103,40 +103,86 @@ function keyCard(texture, opts) {
 }
 
 /**
+ * Pose art (transparent frames cut from a sheet, one canvas size per unit): clean each frame
+ * (cleanPose drops the sheet's leftovers), then crop every frame to one shared box so they swap
+ * without jitter: as wide as the widest frame, from the highest top down to the idle pose's feet.
+ * Returns { texture (idle), frames: { windup, strike }, aspect, height } or null.
+ */
+async function loadPoseSet(loader, p, baseHeight) {
+  const names = ['idle', 'windup', 'strike'].filter((n) => p[n]);
+  if (!p.idle) return null;
+  const out = {};
+  for (const name of names) {
+    try {
+      const img = (await loader.loadAsync(p[name])).image;
+      const c = document.createElement('canvas');
+      c.width = img.width;
+      c.height = img.height;
+      const g = c.getContext('2d', { willReadFrequently: true });
+      g.drawImage(img, 0, 0);
+      const px = g.getImageData(0, 0, c.width, c.height);
+      const info = cleanPose(px.data, c.width, c.height);
+      if (!info) continue;
+      g.putImageData(px, 0, 0);
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = 4;
+      out[name] = { tex, info, w: c.width, h: c.height };
+    } catch (err) {
+      console.warn(`[assets] could not load ${name} pose ${p[name]}; holding the idle pose.`, err);
+    }
+  }
+  const idle = out.idle;
+  if (!idle) return null;
+  const { w, h } = idle;
+  const feet = idle.info.main.y1 + 1; // exclusive
+  let x0 = w, x1 = 0, y0 = feet;
+  for (const f of Object.values(out)) {
+    if (f.w !== w || f.h !== h) continue; // a frame on a different canvas can't share the crop
+    x0 = Math.min(x0, f.info.bbox.x0);
+    x1 = Math.max(x1, f.info.bbox.x1 + 1);
+    y0 = Math.min(y0, f.info.bbox.y0);
+  }
+  for (const f of Object.values(out)) {
+    f.tex.offset.set(x0 / w, (h - feet) / h);
+    f.tex.repeat.set((x1 - x0) / w, (feet - y0) / h);
+  }
+  // world scale: the idle figure (its own top to its feet) stands baseHeight tall
+  const wpp = baseHeight / Math.max(1, feet - idle.info.main.y0);
+  const frames = {};
+  for (const n of ['windup', 'strike']) if (out[n] && out[n].w === w && out[n].h === h) frames[n] = out[n].tex;
+  return { texture: idle.tex, frames, aspect: (x1 - x0) / (feet - y0), height: (feet - y0) * wpp };
+}
+
+/**
  * Load every resolved sprite URL ({ id: url|null }); failures warn and keep the procedural figure.
- * `poses` ({ id: { idle, windup, strike } } of URLs) are optional pose art: when a unit has an idle
- * pose it stands on that, and its attack swaps to the windup / strike frames. All poses of a unit
- * share one canvas size, so the idle pose's trim crop is reused for the others (no jitter).
+ * `poses` ({ id: { idle, windup, strike } } of URLs) are optional pose art: a unit with an idle pose
+ * stands on that, and its attack swaps to the windup / strike frames (see loadPoseSet).
  */
 export async function loadUnitSprites(urls, poses = {}) {
   const loader = new THREE.TextureLoader();
-  const prep = async (url, tw) => {
-    const { texture, key } = keyCard(await loader.loadAsync(url), { ...SPRITE_KEY, ...tw.key });
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.anisotropy = 4;
-    return { texture, key };
-  };
-  await Promise.all(Object.entries(urls).map(async ([id, url0]) => {
-    const p = poses[id] ?? {};
-    const url = p.idle || url0;
+  await Promise.all(Object.entries(urls).map(async ([id, url]) => {
+    const tw = SPRITE_TWEAKS[id] ?? {};
+    const baseHeight = tw.height ?? SPRITE_HEIGHT;
+    const p = poses[id];
+    if (p?.idle) {
+      try {
+        const set = await loadPoseSet(loader, p, baseHeight);
+        if (set) {
+          templates.set(id, { ...set, tw, url: p.idle, key: null });
+          return;
+        }
+      } catch (err) {
+        console.warn(`[assets] ${id}: pose art failed; falling back to the sprite.`, err);
+      }
+    }
     if (!url) return;
     try {
-      const tw = SPRITE_TWEAKS[id] ?? {};
-      const { texture, key } = await prep(url, tw);
+      const { texture, key } = keyCard(await loader.loadAsync(url), { ...SPRITE_KEY, ...tw.key });
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.anisotropy = 4;
       const aspect = trim(texture);
-      const frames = {};
-      for (const name of ['windup', 'strike']) {
-        if (!p[name]) continue;
-        try {
-          const f = (await prep(p[name], tw)).texture;
-          f.offset.copy(texture.offset);
-          f.repeat.copy(texture.repeat);
-          frames[name] = f;
-        } catch (err) {
-          console.warn(`[assets] ${id}: could not load ${name} pose ${p[name]}; holding the idle pose.`, err);
-        }
-      }
-      templates.set(id, { texture, aspect, height: tw.height ?? SPRITE_HEIGHT, tw, url, key, frames });
+      templates.set(id, { texture, aspect, height: baseHeight, tw, url, key, frames: {} });
     } catch (err) {
       failures.set(id, String(err?.message || err));
       console.warn(`[assets] ${id}: could not load sprite ${url}; using the built-in figure.`, err);

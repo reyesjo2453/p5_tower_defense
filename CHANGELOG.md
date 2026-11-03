@@ -29,8 +29,13 @@
   with the mechanics, and loses without them or without ranks.
 - **Checkpoints and saves**: a loss restarts the current chapter. CONTINUE on the title resumes the
   saved chapter.
-- **Pose-art pipeline**: optional `<id>-idle|windup|strike.png` frames are swapped by the attack
-  state machine (see `docs/ASSETS.md`).
+- **Pose art is in.** Jester, Queen and Oracle now fight with the uploaded `vanguard-` / `guard-` /
+  `oracle-idle|windup|strike.png` frames: wind-up on ANTICIPATE, strike through LUNGE and HIT_STOP,
+  and back to idle during the recoil. The frames are mirrored toward the target.
+  - Each frame is cleaned at load (`cleanPose`): the next row's heads below the feet and slivers
+    cut from neighbouring cells are dropped.
+  - All frames share one crop: as wide as the widest frame, anchored at the idle pose's feet.
+  - Any unit without pose art uses its keyed sprite. See `docs/ASSETS.md`.
 - **All-Out Attack** shows one panel per Phantom on stage (up to five).
 - `?unlock=all` opens a sandbox (whole cast, auto waves, no story). `?story=0` plays the campaign
   without scenes or lessons.
