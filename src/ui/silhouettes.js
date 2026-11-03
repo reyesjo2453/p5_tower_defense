@@ -165,6 +165,67 @@ function oracle() {
   });
 }
 
+// ------------------------------------------------------------------------------------- PROMPTER
+// The cat in the prompt box: a small sitting cat, ears up, a script scroll under one paw, a gold
+// bow at the throat and two glowing eye-slits (no other facial features), tail curling up.
+function prompter() {
+  const body = [[96, 400], [110, 322], [148, 270], [214, 262], [262, 290], [286, 350], [292, 400]];
+  const head = [[128, 214], [132, 168], [118, 98], [166, 140], [210, 138], [252, 92], [252, 168], [262, 210], [240, 250], [190, 262], [146, 250]];
+  const tail = [[284, 380], [334, 352], [356, 290], [340, 232], [366, 214], [380, 290], [358, 366], [300, 400]];
+  const paw = [[150, 400], [156, 352], [196, 344], [204, 400]];
+  const fx = `
+  <g fill="#ffd400" filter="url(#glow)">
+    <polygon points="150,192 184,184 180,198 154,202"/><polygon points="206,184 240,192 236,202 210,198"/>
+  </g>
+  <g fill="#ffd400" stroke="#050505" stroke-width="3">
+    <polygon points="170,258 196,268 170,282"/><polygon points="222,258 196,268 222,282"/><circle cx="196" cy="268" r="7"/>
+  </g>
+  <g>
+    <rect x="198" y="330" width="92" height="40" rx="18" fill="#f4f0e6" stroke="#050505" stroke-width="4" transform="rotate(-14 244 350)"/>
+    <g stroke="#050505" stroke-width="2" opacity=".6" transform="rotate(-14 244 350)"><line x1="214" y1="342" x2="276" y2="342"/><line x1="214" y1="350" x2="270" y2="350"/><line x1="214" y1="358" x2="262" y2="358"/></g>
+  </g>`;
+  return compose({
+    w: 400, h: 400,
+    shapes: [tail, body, head, paw],
+    rim: [6, -4],
+    hatch: [[118, 110, 140, 150, 3], [248, 100, 246, 150, 3], [270, 300, 284, 350, 4]],
+    fx,
+  });
+}
+
+// ------------------------------------------------------------------------------------- LIMELIGHT
+// Pyrotechnic star: twin tails whipping up like flames, a long stage coat, one arm thrown up with a
+// fire orb in the palm, and sparks rising around her.
+function limelight() {
+  const coat = [[64, 400], [92, 318], [146, 266], [236, 262], [286, 300], [312, 400]];
+  const head = [[150, 170], [156, 124], [192, 100], [234, 108], [256, 142], [252, 184], [230, 210], [188, 214], [160, 198]];
+  const tailL = [[160, 130], [110, 110], [60, 150], [30, 220], [40, 290], [70, 240], [86, 200], [120, 170]];
+  const tailR = [[240, 116], [290, 90], [340, 118], [362, 190], [340, 260], [326, 200], [300, 160], [256, 140]];
+  const arm = [[250, 280], [286, 268], [330, 170], [352, 120], [330, 108], [300, 160], [256, 240]];
+  const r = rng(11);
+  let sparks = '';
+  for (let i = 0; i < 26; i++) {
+    const x = 220 + r() * 170;
+    const y = 10 + r() * 150;
+    sparks += `<polygon points="${x},${y} ${x + 3},${y + 9} ${x - 3},${y + 9}" fill="${r() < 0.5 ? '#ffd400' : '#ff6a1a'}" opacity="${(0.5 + r() * 0.5).toFixed(2)}"/>`;
+  }
+  const fx = `
+  <g filter="url(#glow)">
+    <path d="M340,104 C312,80 336,52 330,20 C356,44 380,64 366,100 C360,116 346,118 340,104 z" fill="#ff6a1a"/>
+    <circle cx="342" cy="100" r="16" fill="#ffd400"/>
+  </g>
+  <g fill="#ff6a1a" filter="url(#glow)"><polygon points="176,150 212,146 210,158 178,160"/></g>
+  ${sparks}`;
+  return compose({
+    w: 400, h: 400,
+    shapes: [tailL, tailR, coat, head, arm],
+    rim: [-6, -5],
+    shade: 'right',
+    hatch: [[100, 320, 130, 280, 4], [270, 290, 300, 330, 3], [60, 240, 80, 200, 3]],
+    fx,
+  });
+}
+
 // ------------------------------------------------------------------------------------- LEADER
 // Splash hero, full body in a 3/4 back view: hair whipping, collar popped, coat tails torn back by
 // the wind, both hands up at the chest pulling a crimson glove tight.
@@ -210,10 +271,10 @@ function leader() {
   });
 }
 
-const BUILD = { jester, queen, oracle, leader };
+const BUILD = { jester, queen, oracle, prompter, limelight, leader };
 const cache = {};
 
-/** data: URL for the silhouette of `id` (jester | queen | oracle | leader). */
+/** data: URL for the silhouette of `id` (a unit id or 'leader'). */
 export function silhouetteURL(id) {
   if (!cache[id]) cache[id] = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(BUILD[id]())}`;
   return cache[id];

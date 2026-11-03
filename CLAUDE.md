@@ -13,5 +13,6 @@ Encore Protocol · Phantom Showcase: a Persona-inspired 3D tower defense set in 
 - After changing numbers in src/sim/data.js, run npm test (balance guard rails: win with mechanics, lose without).
 - Camera: CameraRig in src/render/view.js (fit() = whole board; player zoom/pan layer on top, default ZOOM_DEFAULT ~30% closer; kick() = hit impulse). Input lives in main.js.
 - Combat feel: sim Baton Pass prompts run in bullet-time (game.timeScale, rules.bulletTime/batonCooldown per lane); the view scales its dt by game.timeScale. Billboard attacks are a state machine in spriteUnits.js (ATTACK timings); impact flash + threat ring in src/render/combatEffects.js; damage numbers / callouts in src/render/combatText.js.
+- Story campaign: src/story/script.js (scenes, one per CAMPAIGN chapter in sim/data.js + ending), lessons.js (Prompter tutorial steps), save.js (localStorage). UI: src/ui/story.js, src/ui/tutorial.js. Game({ campaign: true }) stops in 'intermission' between chapters. Five unique units (one each on stage), rank-ups and Blocking (move). ?unlock=all = sandbox, ?story=0 = no scenes/lessons. Plot outline (spoilers): docs/STORY.md.
 - window.__game exposes { game, state, rig, scene, … } for debugging/smoke tests.
 - Deploy: .github/workflows/pages.yml (push to main or manual run; Pages source must be "GitHub Actions").

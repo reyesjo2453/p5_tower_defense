@@ -280,6 +280,9 @@ function makeBars(width = 0.7) {
 }
 
 const KICK = 0.05; // directional camera micro-impulse per landed melee hit (world units)
+const RANGED = new Set(['oracle', 'limelight', 'prompter']); // no lunge-to-contact, no camera kick
+const RANK_COLORS = [null, 0xd6dcff, 0xffd400]; // rank 2 silver, rank 3 gold
+const TREASURE_P = new THREE.Vector3(0, 1.9, 0);
 
 export class View {
   constructor(scene, fx, rig, sfx = null, text = null) {
@@ -310,11 +313,12 @@ export class View {
     this.scene.add(ring);
     const v = { u, model, ring, spawnT: 0, atkT: 0, atkDir: new THREE.Vector3(0, 0, 1), base: p.clone(), phase: Math.random() * 6 };
     this.units.set(u.uid, v);
+    if (u.rank > 1) this.setRank(v, u.rank, false);
     if (model.sprite) {
       v.spawnT = 1; // the sprite's own 180 ms drop replaces the scale pop; landing FX fire in update()
       return;
     }
-    this.fx.ring(p.clone().setY(0.1), u.type === 'oracle' ? 0x39ff88 : 0xffffff, 2.2, 0.4);
+    this.fx.ring(p.clone().setY(0.1), u.def.accent === '#e8e8f0' ? 0xffffff : u.def.accent, 2.2, 0.4);
     this.fx.burstSparks(p.clone().setY(0.5), 14);
   }
 
@@ -325,6 +329,7 @@ export class View {
     v.model.dispose?.();
     this.scene.remove(v.ring);
     v.ring.userData.dispose();
+    this.setRank(v, 1, false);
     this.fx.inkBurst(v.base.clone().setY(0.6), 14);
     this.units.delete(u.uid);
   }
@@ -358,6 +363,16 @@ export class View {
   onEvent(ev) {
     switch (ev.t) {
       case 'place': this.addUnit(ev.unit); break;
+      case 'move': this.moveUnit(ev.unit, ev.from); break;
+      case 'rank': {
+        const v = this.units.get(ev.unit.uid);
+        if (v) this.setRank(v, ev.rank, true);
+        break;
+      }
+      case 'heal':
+        this.text?.damage(TREASURE_P, ev.amount, 'heal');
+        this.fx.ring(new THREE.Vector3(0, 0.4, 0), 0x39ff88, 2.6, 0.5);
+        break;
       case 'sell': this.removeUnit(ev.unit); break;
       case 'spawn': this.addEnemy(ev.enemy); break;
       case 'kill': {
@@ -382,26 +397,13 @@ export class View {
           // billboard: anticipate + lunge first; the hit lands (burst, flash, numbers, hit-stop, SFX)
           // when its state machine enters HIT_STOP
           if (v.pendingHit) this.spriteImpact(v); // a quicker re-attack: land the previous blow now
-          const ranged = ev.unit.type === 'oracle';
-          v.model.playAttack(ranged ? 0.14 : 0.4);
+          v.model.playAttack(RANGED.has(ev.unit.type) ? 0.14 : 0.4);
           v.pendingHit = { type: ev.unit.type, hitP, angle: Math.atan2(v.atkDir.z, v.atkDir.x), hits: [] };
           break;
         }
-        if (ev.unit.type !== 'oracle') this.rig.kick?.(v.atkDir, KICK);
+        if (!RANGED.has(ev.unit.type)) this.rig.kick?.(v.atkDir, KICK);
         v.model.playAttack?.();
-        if (ev.unit.type === 'oracle') this.sfx?.magic();
-        else this.sfx?.punch();
-        if (ev.unit.type === 'jester') {
-          this.fx.slash(hitP, Math.atan2(v.atkDir.z, v.atkDir.x));
-          this.fx.burstSparks(hitP, 5, new THREE.Color(0xffffff));
-        } else if (ev.unit.type === 'queen') {
-          this.fx.ring(hitP, 0xff1a3d, 1.6, 0.25);
-          this.fx.burstSparks(hitP, 7);
-        } else {
-          const from = v.model.gltf || v.model.sprite ? v.model.root.position.clone().setY(v.model.root.position.y + v.model.height * 0.7) : v.model.parts.body.getWorldPosition(new THREE.Vector3());
-          this.fx.beam(from, hitP, 0x39ff88);
-          this.fx.burstSparks(hitP, 4);
-        }
+        this.strikeFx(v, ev.unit.type, hitP, Math.atan2(v.atkDir.z, v.atkDir.x), false);
         break;
       }
       case 'hit': {
@@ -451,7 +453,7 @@ export class View {
     this.stats.landings++;
     const p = v.base.clone().setY(v.base.y + 0.04);
     this.fx.dust(p, 2.6, 0.32);
-    this.fx.ring(p, v.u.type === 'oracle' ? 0x39ff88 : 0xffffff, 1.6, 0.25);
+    this.fx.ring(p, v.u.type === 'jester' ? 0xffffff : v.u.def.accent, 1.6, 0.25);
     this.fx.inkBurst(p.clone().setY(p.y + 0.1), 8);
     this.rig.shake = Math.max(this.rig.shake ?? 0, 0.35);
   }
@@ -476,8 +478,9 @@ export class View {
     if (!this.text) return;
     const s = ev.enemy.def.scale;
     const p = v.model.root.position.clone().setY(RUNWAY_H + 1.7 * s * 0.85 + 0.25);
-    const magic = ev.unit?.type === 'oracle';
-    this.text.damage(p, ev.dmg, magic ? 'magic' : 'physical', { crit: ev.crit || !ev.unit });
+    const magic = ev.unit?.type === 'oracle' || ev.unit?.type === 'limelight' || ev.dot;
+    if (ev.dot && ev.dmg < 1) return;
+    this.text.damage(p, ev.dmg, magic ? 'magic' : 'physical', { crit: ev.crit || !ev.unit, small: ev.dot });
     if ((ev.crit || ev.weak) && v.callT <= 0) {
       v.callT = 0.6; // one badge per Shadow at a time
       this.text.callout(p.clone().setY(p.y + 0.35), ev.crit ? 'CRITICAL!' : 'WEAK!');
@@ -495,25 +498,83 @@ export class View {
       const ve = this.enemies.get(ev.enemy.uid);
       if (ve?.dying) this.removeEnemy(ev.enemy, 'kill');
     }
-    if (h.type !== 'oracle') this.rig.kick?.(v.atkDir, KICK);
-    if (h.type === 'oracle') {
-      const from = v.model.root.position.clone().setY(v.model.root.position.y + v.model.height * 0.7);
-      this.fx.beam(from, h.hitP, 0x39ff88);
-      this.fx.comicBurst(h.hitP, 'tech', 0.75);
-      this.fx.burstSparks(h.hitP, 4);
+    if (!RANGED.has(h.type)) this.rig.kick?.(v.atkDir, KICK);
+    this.strikeFx(v, h.type, h.hitP, h.angle, true);
+  }
+
+  /** Each Phantom's signature strike at the contact point (+ its SFX). `burst` adds the comic star. */
+  strikeFx(v, type, hitP, angle, burst) {
+    const from = () => (v.model.gltf || v.model.sprite
+      ? v.model.root.position.clone().setY(v.model.root.position.y + v.model.height * 0.7)
+      : (v.model.parts.body ?? v.model.root).getWorldPosition(new THREE.Vector3()).setY(v.base.y + 0.9));
+    if (type === 'jester') {
+      this.fx.slash(hitP, angle);
+      if (burst) this.fx.comicBurst(hitP, 'slash', 0.95);
+      this.fx.burstSparks(hitP, 5, new THREE.Color(0xffffff));
+      this.sfx?.punch();
+    } else if (type === 'queen') {
+      this.fx.ring(hitP, 0xff1a3d, 1.6, 0.25);
+      if (burst) this.fx.comicBurst(hitP, 'punch', 0.9);
+      this.fx.burstSparks(hitP, 7);
+      this.sfx?.punch();
+    } else if (type === 'limelight') {
+      this.fx.beam(from(), hitP, 0xff6a1a);
+      this.fx.ring(hitP, 0xff6a1a, 2.2, 0.35);
+      if (burst) this.fx.comicBurst(hitP, 'fire', 0.95);
+      this.fx.burstSparks(hitP, 10, new THREE.Color(0xffa040));
       this.sfx?.magic();
-      return;
-    }
-    if (h.type === 'jester') {
-      this.fx.slash(h.hitP, h.angle);
-      this.fx.comicBurst(h.hitP, 'slash', 0.95);
-      this.fx.burstSparks(h.hitP, 5, new THREE.Color(0xffffff));
+    } else if (type === 'prompter') {
+      this.fx.beam(from(), hitP, 0xffd400);
+      if (burst) this.fx.comicBurst(hitP, 'cue', 0.6);
+      this.fx.burstSparks(hitP, 3, new THREE.Color(0xffd400));
+      this.sfx?.tap();
     } else {
-      this.fx.ring(h.hitP, 0xff1a3d, 1.6, 0.25);
-      this.fx.comicBurst(h.hitP, 'punch', 0.9);
-      this.fx.burstSparks(h.hitP, 7);
+      this.fx.beam(from(), hitP, 0x39ff88);
+      if (burst) this.fx.comicBurst(hitP, 'tech', 0.75);
+      this.fx.burstSparks(hitP, 4);
+      this.sfx?.magic();
     }
-    this.sfx?.punch();
+  }
+
+  /** Rank aura: a glowing floor ring under the unit, silver at Rank 2, gold at Rank 3. */
+  setRank(v, rank, celebrate) {
+    if (v.aura) {
+      this.scene.remove(v.aura);
+      v.aura.geometry.dispose();
+      v.aura.material.dispose();
+      v.aura = null;
+    }
+    if (rank > 1) {
+      const c = new THREE.Color(RANK_COLORS[rank - 1]).multiplyScalar(1.8);
+      v.aura = new THREE.Mesh(new THREE.RingGeometry(0.36, 0.44 + rank * 0.03, 6, 1), new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.85, toneMapped: false, depthWrite: false, side: THREE.DoubleSide }));
+      v.aura.rotation.x = -Math.PI / 2;
+      v.aura.position.copy(v.base).setY(v.base.y + 0.03);
+      this.scene.add(v.aura);
+    }
+    if (celebrate) {
+      const p = v.base.clone().setY(v.base.y + 0.1);
+      this.fx.ring(p, RANK_COLORS[rank - 1] ?? 0xffffff, 2.4, 0.45);
+      this.fx.burstSparks(p.clone().setY(p.y + 0.8), 22, new THREE.Color(RANK_COLORS[rank - 1] ?? 0xffffff));
+      this.text?.callout(p.clone().setY(p.y + 2), `RANK ${rank}!`);
+      this.rig.shake = Math.max(this.rig.shake ?? 0, 0.3);
+    }
+  }
+
+  /** Blocking: the unit leaves its old plate in a puff of ink and drops onto the new one. */
+  moveUnit(u, from) {
+    const v = this.units.get(u.uid);
+    if (!v) return;
+    this.fx.inkBurst(world(from.x, from.y, SLOT_H).setY(0.6), 12);
+    const p = world(u.x, u.y, SLOT_H);
+    v.base.copy(p);
+    v.model.root.position.copy(p);
+    v.ring.position.copy(p).setY(0.25);
+    if (v.aura) v.aura.position.copy(p).setY(p.y + 0.03);
+    if (v.model.sprite) v.model.redeploy?.();
+    else {
+      v.spawnT = 0;
+      this.fx.ring(p.clone().setY(0.1), 0xffffff, 2.2, 0.4);
+    }
   }
 
   /** Remove every remaining figure (new game). */
@@ -560,7 +621,7 @@ export class View {
       } else if (model.gltf) {
         // imported figure: its own clips drive the pose; add a short lunge toward the target
         model.mixer?.update(dt * (baton ? 1.5 : 1));
-        model.root.position.copy(v.base).addScaledVector(v.atkDir, swing * (u.type === 'oracle' ? 0.08 : 0.25));
+        model.root.position.copy(v.base).addScaledVector(v.atkDir, swing * (RANGED.has(u.type) ? 0.08 : 0.25));
         if (!model.mixer) P.body.position.y = Math.sin(t * 2 + v.phase) * 0.02;
       } else if (u.type === 'jester') {
         model.root.position.copy(v.base).addScaledVector(v.atkDir, swing * 0.35);
@@ -581,6 +642,19 @@ export class View {
           a.rotation.y = t * 3;
         }
         P.body.position.y = Math.sin(t * 2 + v.phase) * 0.01;
+      } else if (u.type === 'prompter') {
+        model.root.position.copy(v.base);
+        P.body.position.y = Math.abs(Math.sin(t * 2.4 + v.phase)) * 0.03 + swing * 0.12;
+        P.head.rotation.z = Math.sin(t * 1.3 + v.phase) * 0.12;
+        P.tail.rotation.z = 0.4 + Math.sin(t * 3 + v.phase) * 0.3;
+        P.arms[0].rotation.x = -swing * 1.2;
+      } else if (u.type === 'limelight') {
+        model.root.position.copy(v.base).addScaledVector(v.atkDir, swing * 0.08);
+        P.body.position.y = Math.sin(t * 2 + v.phase) * 0.015;
+        P.arms[1].rotation.x = -swing * 2.2 - 0.2;
+        P.tails.forEach((tl, i) => { tl.rotation.x = Math.sin(t * 5 + i) * 0.15 - 0.2; });
+        P.flame.scale.setScalar(1 + Math.sin(t * 12) * 0.12 + swing * 1.2);
+        P.flame.rotation.y = t * 3;
       } else {
         P.body.position.y = 1.0 + Math.sin(t * 2 + v.phase) * 0.08;
         P.shell.rotation.y = t * 0.8;
@@ -638,14 +712,15 @@ export class View {
       }
       // glowing eyes flicker; marked enemies get green-tinted eyes
       for (const eye of P.eyes) eye.scale.y = 0.6 + Math.abs(Math.sin(t * 9 + v.phase)) * 0.6;
+      if (e.burn && Math.random() < dt * 14) this.fx.burstSparks(root.position.clone().setY(RUNWAY_H + 0.4 + Math.random() * e.def.scale), 1, new THREE.Color(0xff7a1a));
       v.hitT = Math.max(0, v.hitT - dt * 6);
       const s = e.def.scale * 0.85 * (1 + v.hitT * 0.08);
       root.scale.set(s * (1 + v.hitT * 0.06), s, s);
       // bars billboard above the head
       bars.group.position.copy(root.position).setY(RUNWAY_H + 1.55 * e.def.scale * 0.85 + 0.15);
       bars.group.quaternion.copy(q);
-      bars.hp.scale.x = Math.max(0.0001, bars.width * Math.max(0, e.hp / e.def.hp));
-      bars.posture.scale.x = Math.max(0.0001, bars.width * Math.max(0, e.posture / e.def.posture));
+      bars.hp.scale.x = Math.max(0.0001, bars.width * Math.max(0, e.hp / e.maxHp));
+      bars.posture.scale.x = Math.max(0.0001, bars.width * Math.max(0, e.posture / e.maxPosture));
       bars.posture.material.color.setHex(e.down > 0 ? 0xffffff : e.mark > 0 ? 0x39ff88 : 0xffd400);
       if (e.down > 0) bars.posture.scale.x = bars.width * (e.down / game.rules.downTime);
     }

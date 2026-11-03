@@ -38,19 +38,19 @@ export class CombatText {
   }
 
   /** Damage / heal number. `crit` makes it bigger and adds a jolt. */
-  damage(p, amount, kind = 'physical', { crit = false } = {}) {
+  damage(p, amount, kind = 'physical', { crit = false, small = false } = {}) {
     const n = Math.max(1, Math.round(amount));
-    const big = crit || n >= 200;
+    const big = !small && (crit || n >= 200);
     const side = Math.random() < 0.5 ? -1 : 1;
     this.count.damage++;
-    return this.spawn(`dmg ${kind}${big ? ' big' : ''}`, kind === 'heal' ? `+${n}` : String(n), p, DAMAGE_T, {
-      kind: 'damage', dx: side * (14 + Math.random() * 22), rise: 46 + Math.random() * 14, size: big ? 1.35 : 1,
+    return this.spawn(`dmg ${kind}${big ? ' big' : ''}${small ? ' small' : ''}`, kind === 'heal' ? `+${n}` : String(n), p, DAMAGE_T, {
+      kind: 'damage', dx: side * (14 + Math.random() * 22), rise: 46 + Math.random() * 14, size: big ? 1.35 : small ? 0.7 : 1,
     });
   }
 
   callout(p, text) {
     this.count.callout++;
-    const cls = text.startsWith('CRIT') ? 'callout crit' : 'callout weak';
+    const cls = text.startsWith('CRIT') ? 'callout crit' : text.startsWith('RANK') ? 'callout rank' : 'callout weak';
     return this.spawn(cls, `<span>${text}</span>`, p, CALLOUT_T, { kind: 'callout', dx: 0, rise: 34, size: 1 });
   }
 

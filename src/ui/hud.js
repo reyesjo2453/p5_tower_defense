@@ -45,7 +45,8 @@ export class Hud {
     r.innerHTML = '';
     this.top = $(`<div class="hud-top">
       <div class="hud-left">
-        <div class="chip red"><span>WAVE <b data-k="wave">0</b>/<span data-k="waves">0</span></span></div>
+        <div class="chip red act"><span><b data-k="act">PROLOGUE</b><small data-k="ctitle"></small></span></div>
+        <div class="chip perf" data-k="perfchip" style="display:none"><span>PERF <b>#<i data-k="perf">46</i></b></span></div>
         <div class="chip treasure"><span><span class="ico">♛</span> <span class="lbl">TREASURE</span></span><div class="tbar"><i data-k="tbar" style="width:100%"></i></div></div>
       </div>
       <div class="hud-right">
@@ -58,7 +59,7 @@ export class Hud {
     r.appendChild(this.top);
     this.deck = $('<div class="deck"></div>');
     for (const def of Object.values(UNITS)) {
-      const c = $(`<button class="card accent-${def.id}" data-unit="${def.id}">
+      const c = $(`<button class="card locked accent-${def.id}" data-unit="${def.id}">
         <span class="frame" style="clip-path:${JAG}"></span>
         <span class="face" style="clip-path:${JAG}">${this.portraits.card[def.id] ? `<img alt="" src="${this.portraits.card[def.id]}">` : ''}<i class="shade"></i></span>
         <span class="meta"><span class="row"><span class="role">${def.role.toUpperCase()}</span><span class="cost"><small>¥</small>${def.cost}</span></span><span class="nm">${def.name.toUpperCase()}</span></span>
@@ -70,8 +71,8 @@ export class Hud {
       this.deck.appendChild(c);
     }
     r.appendChild(this.deck);
-    this.panel = $(`<div class="unitpanel"><img class="pv" alt="" data-k="pimg"><h3 data-k="pname">UNIT</h3><p data-k="pdesc"></p>
-      <button class="live baton" data-act="baton">BATON PASS ▶</button><button class="live" data-act="sell">SELL</button><button class="live" data-act="close">✕</button></div>`);
+    this.panel = $(`<div class="unitpanel"><img class="pv" alt="" data-k="pimg"><h3 data-k="pname">UNIT</h3><div class="pips" data-k="prank"></div><p data-k="pdesc"></p>
+      <div class="pbtns"><button class="live baton" data-act="baton">BATON PASS ▶</button><button class="live rank" data-act="rank">RANK UP</button><button class="live move" data-act="move">MOVE</button><button class="live" data-act="sell">SELL</button><button class="live" data-act="close">✕</button></div></div>`);
     r.appendChild(this.panel);
     this.hintEl = $('<div class="hint" style="display:none"></div>');
     r.appendChild(this.hintEl);
@@ -91,11 +92,14 @@ export class Hud {
     for (const c of this.deck.children) c.classList.toggle('sel', c.dataset.unit === id);
   }
 
-  showUnit(u, canBaton) {
+  showUnit(u, canBaton, game = null) {
+    this.panelUnit = u;
+    this.panelGame = game;
     if (!u) {
       this.panel.classList.remove('show');
       return;
     }
+    this.refreshPanel();
     this.q('pname').textContent = `${u.def.name} · ${u.def.role.toUpperCase()}`;
     const pv = this.q('pimg');
     const src = this.portraits.card[u.type] || '';
@@ -103,8 +107,37 @@ export class Hud {
     pv.style.display = src ? '' : 'none';
     this.q('pdesc').textContent = u.def.blurb;
     this.panel.querySelector('[data-act="baton"]').style.display = canBaton ? '' : 'none';
-    this.panel.querySelector('[data-act="sell"]').textContent = `SELL +${Math.floor(u.def.cost / 2)}`;
     this.panel.classList.add('show');
+  }
+
+  /** Rank pips, RANK UP cost / availability, MOVE cooldown and the sell refund (called each frame). */
+  refreshPanel() {
+    const u = this.panelUnit;
+    const g = this.panelGame;
+    if (!u || !g) return;
+    const pips = `${'★'.repeat(u.rank)}${'☆'.repeat(3 - u.rank)}`;
+    const pr = this.q('prank');
+    if (pr.textContent !== pips) pr.textContent = pips;
+    const rb = this.panel.querySelector('[data-act="rank"]');
+    const cost = g.rankCost(u);
+    rb.style.display = g.mech.has('rank') && u.rank < 3 ? '' : 'none';
+    const rl = cost != null ? `RANK UP ¥${cost}` : 'MAX RANK';
+    if (rb.textContent !== rl) rb.textContent = rl;
+    rb.classList.toggle('poor', cost == null || g.cash < cost);
+    const mb = this.panel.querySelector('[data-act="move"]');
+    mb.style.display = g.mech.has('blocking') ? '' : 'none';
+    const ml = u.moveCd > 0 ? `MOVE ${Math.ceil(u.moveCd)}s` : 'MOVE';
+    if (mb.textContent !== ml) mb.textContent = ml;
+    mb.classList.toggle('poor', u.moveCd > 0);
+    const sl = `SELL +${Math.floor(u.spent * g.rules.sellRefund)}`;
+    const sb = this.panel.querySelector('[data-act="sell"]');
+    if (sb.textContent !== sl) sb.textContent = sl;
+  }
+
+  /** Performance counter (shown once the Prompter has revealed the loop). */
+  setPerformance(n, show) {
+    this.q('perfchip').style.display = show ? '' : 'none';
+    this.q('perf').textContent = n;
   }
 
   hint(text, ms = 3200) {
@@ -131,11 +164,26 @@ export class Hud {
   }
 
   update(game) {
-    this.q('wave').textContent = Math.max(0, game.waveIdx + 1);
-    this.q('waves').textContent = game.waves.length;
+    const ch = game.chapter;
+    if (ch && this.q('act').textContent !== ch.label) {
+      this.q('act').textContent = ch.label;
+      this.q('ctitle').textContent = ch.title.toUpperCase();
+    }
+    // the cast: a card appears when its Phantom joins the story; a Phantom on stage greys its card
+    for (const c of this.deck.children) {
+      const id = c.dataset.unit;
+      const open = game.unlocked.has(id);
+      if (open && c.classList.contains('locked')) {
+        c.classList.remove('locked');
+        c.classList.add('new');
+        setTimeout(() => c.classList.remove('new'), 1400);
+      } else if (!open) c.classList.add('locked');
+      c.classList.toggle('onstage', !!game.onStage(id));
+    }
+    if (this.panelUnit) this.refreshPanel();
     this.q('cash').textContent = Math.floor(game.cash);
     this.q('tbar').style.width = `${(game.treasure / game.rules.treasureHp) * 100}%`;
-    for (const c of this.deck.children) c.classList.toggle('poor', game.cash < UNITS[c.dataset.unit].cost);
+    for (const c of this.deck.children) c.classList.toggle('poor', !game.onStage(c.dataset.unit) && game.cash < UNITS[c.dataset.unit].cost);
     this.batonPrompt(game);
     const ready = game.allOutReady && !this.suppress;
     if (ready && !this.allOutBtn) {
@@ -278,13 +326,16 @@ export class Hud {
    * Plays the finisher. `freezeFrame` is an image (canvas) of the arena at the moment of the tap;
    * `impact` is called at the shatter moment (apply damage, rain calling cards).
    */
-  async allOut(freezeFrame, fx2d, impact) {
+  async allOut(freezeFrame, fx2d, impact, cast = ['jester', 'queen', 'oracle']) {
     this.suppress = true;
     this.allOutBtn?.remove();
     this.allOutBtn = null;
-    const ids = ['jester', 'queen', 'oracle'];
-    const el = $(`<div class="allout">
-      ${ids.map((id, i) => `<div class="panel" style="clip-path:${TEX.tornV[i]}"><div class="in" style="clip-path:${TEX.tornV[i]}">
+    // one torn panel per Phantom on stage (up to five), alternating drop-down / rise-up
+    const ids = cast.length ? cast : ['jester'];
+    const np = ids.length;
+    const pw = 100 / np + 12;
+    const el = $(`<div class="allout n${np}">
+      ${ids.map((id, i) => `<div class="panel${i % 2 ? ' up' : ''}" style="left:${(-6 + i * (112 / np)).toFixed(1)}%;width:${pw.toFixed(1)}%;animation-delay:${(i * 0.16).toFixed(2)}s;clip-path:${TEX.tornV[i % 3]}"><div class="in" style="clip-path:${TEX.tornV[i % 3]}">
         <div class="sp" style="background-image:url(&quot;${i === 1 ? TEX.speedPanelK : TEX.speedPanel}&quot;)"></div>
         ${this.portraits.cutin[id] ? `<img alt="" src="${this.portraits.cutin[id]}">` : ''}<div class="lbl">${UNITS[id].name.toUpperCase()}</div></div></div>`).join('')}
       <div class="title">ALL-OUT ATTACK</div>

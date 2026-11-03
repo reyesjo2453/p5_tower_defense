@@ -1,7 +1,7 @@
 // Entry point: renderer + scene setup, input (touch/drag/tap), game loop, cut-in orchestration.
 import * as THREE from 'three';
 import { Game } from './sim/game.js';
-import { UNITS } from './sim/data.js';
+import { UNITS, CAMPAIGN } from './sim/data.js';
 import { buildArena, world } from './render/arena.js';
 import { createPost } from './render/post.js';
 import { Fx } from './render/fx.js';
@@ -9,15 +9,24 @@ import { View, CameraRig } from './render/view.js';
 import { Hud } from './ui/hud.js';
 import { buildPalace } from './render/palace.js';
 import { silhouetteURL } from './ui/silhouettes.js';
-import { modelURLs, portraitURLs, spriteURLs } from './assets/resolve.js';
+import { modelURLs, portraitURLs, spriteURLs, poseURLs } from './assets/resolve.js';
 import { loadUnitModels, hasUnitModel } from './render/gltfUnits.js';
 import { loadUnitSprites } from './render/spriteUnits.js';
 import { createAudio } from './audio/index.js';
 import { CombatText } from './render/combatText.js';
+import { StoryPlayer } from './ui/story.js';
+import { Tutor } from './ui/tutorial.js';
+import { SCENES, LOOP_LINES } from './story/script.js';
+import { loadSave, writeSave } from './story/save.js';
 
 const params = new URLSearchParams(location.search);
 const coarse = matchMedia('(pointer: coarse)').matches;
 const quality = params.get('q') || (coarse ? 'mobile' : 'high');
+// ?story=0 skips scenes and lessons; ?unlock=all is a sandbox (whole cast, auto waves, no story)
+const sandbox = params.get('unlock') === 'all';
+const storyOn = params.get('story') !== '0' && !sandbox;
+const save = loadSave();
+const makeGame = (checkpoint = null) => new Game({ campaign: !sandbox, unlockAll: sandbox, checkpoint });
 
 // ---------------------------------------------------------------- renderer / scene
 const canvas = document.getElementById('gl');
@@ -43,7 +52,7 @@ scene.fog = new THREE.FogExp2(0x0c0714, 0.025); // velvet Palace haze
 const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 240);
 const rig = new CameraRig(camera);
 
-let game = new Game();
+let game = makeGame();
 const palace = buildPalace(scene, { quality: quality === 'low' ? 'low' : 'high' });
 const arena = buildArena(scene, game.board, { quality: quality === 'low' ? 'low' : 'high' });
 const post = createPost(renderer, scene, camera, { quality: quality === 'low' ? 'low' : 'high' });
@@ -81,14 +90,24 @@ const assetsReady = loadUnitModels(modelURLs())
   .then((s) => {
     assets.models = s;
     const urls = Object.fromEntries(Object.entries(spriteURLs()).filter(([id]) => !hasUnitModel(id)));
-    return loadUnitSprites(urls);
+    return loadUnitSprites(urls, poseURLs());
   })
   .then((s) => { assets.sprites = s; });
-const state = { speed: 1, paused: false, cine: false, selected: null, card: null, dragging: false, freezeReq: null, firstBreak: true };
+const state = { speed: 1, paused: false, cine: false, selected: null, card: null, dragging: false, freezeReq: null, firstBreak: true, moving: null, unitDrag: null };
 const hud = new Hud(document.getElementById('ui'), portraits, {
   cardDown(id) {
-    if (state.cine) return;
+    if (busy()) return;
     audio.sfx.tap();
+    const on = game.onStage(id);
+    if (on) {
+      // a Phantom already on stage: its card selects it (and frames it) instead of deploying a copy
+      state.card = null;
+      hud.setSelectedCard(null);
+      select(on);
+      rig.panToward(world(on.x, on.y), 0.6);
+      return;
+    }
+    if (!game.unlocked.has(id)) return;
     state.card = state.card === id && !state.dragging ? null : id;
     state.dragging = !!state.card;
     hud.setSelectedCard(state.card);
@@ -108,6 +127,15 @@ const hud = new Hud(document.getElementById('ui'), portraits, {
     } else if (act === 'sell' && state.selected) {
       game.sell(state.selected);
       select(null);
+    } else if (act === 'rank' && state.selected) {
+      if (game.rankUp(state.selected)) audio.sfx.place(0.05);
+      else hud.hint('Not enough ¥ for that rehearsal yet.');
+    } else if (act === 'move' && state.selected) {
+      if (state.selected.moveCd > 0) hud.hint(`${state.selected.def.name} needs ${Math.ceil(state.selected.moveCd)}s before moving again.`);
+      else {
+        state.moving = state.selected;
+        hud.hint(`BLOCKING: tap a free plate for ${state.selected.def.name}.`, 0);
+      }
     } else if (act === 'close') select(null);
     else if (act === 'baton' && state.selected) {
       if (game.batonPass(state.selected)) select(null);
@@ -120,7 +148,12 @@ audio.onMute((m) => hud.setMuted(m));
 
 function select(u) {
   state.selected = u;
-  hud.showUnit(u, !!(u && game.baton && game.baton.from !== u));
+  hud.showUnit(u, !!(u && game.baton && game.baton.from !== u), game);
+}
+
+/** Input is blocked while a cinematic or a story scene is on screen. */
+function busy() {
+  return state.cine || story.playing;
 }
 
 function togglePause(force) {
@@ -143,14 +176,15 @@ function tileAt(clientX, clientY) {
 }
 
 function showGhost(tile) {
-  if (!state.card || !tile) {
+  const mover = state.card ? null : state.moving;
+  if ((!state.card && !mover) || !tile) {
     ghost.visible = false;
     return;
   }
-  const ok = game.canPlace(state.card, tile.x, tile.y);
+  const ok = mover ? game.canMove(mover, tile.x, tile.y) : game.canPlace(state.card, tile.x, tile.y);
   ghost.visible = game.board.slotSet.has(`${tile.x},${tile.y}`);
   ghost.position.copy(world(tile.x, tile.y));
-  const r = UNITS[state.card].range;
+  const r = mover ? game.range(mover) : UNITS[state.card].range;
   ghostRing.scale.setScalar(r);
   ghostPlate.material.color.set(ok ? 0x39ff88 : 0xff1a3d).multiplyScalar(1.6);
 }
@@ -160,7 +194,7 @@ function tryPlace(tile) {
   if (game.place(state.card, tile.x, tile.y)) {
     audio.sfx.place(); // swoosh during the drop-in, thud as the sprite lands
     hud.deployCutIn(state.card);
-    if (game.state === 'ready') hud.hint('Nice. Place a few more, then hit START.');
+    if (game.state === 'ready' && !tutor.active) hud.hint('On stage. Hit RAISE THE CURTAIN when you\'re set.');
     state.card = null;
     hud.setSelectedCard(null);
     ghost.visible = false;
@@ -205,8 +239,13 @@ window.addEventListener('pointermove', (e) => {
     dragPan = { x: e.clientX, y: e.clientY };
     return;
   }
-  if (state.card) showGhost(tileAt(e.clientX, e.clientY));
-  if (state.dragging && state.card) {
+  if (state.unitDrag && !state.moving && Math.hypot(e.clientX - state.unitDrag.x, e.clientY - state.unitDrag.y) > 18) {
+    // dragging a Phantom on the board = Blocking (move it to another plate)
+    state.moving = state.unitDrag.u;
+    select(null);
+  }
+  if (state.card || state.moving) showGhost(tileAt(e.clientX, e.clientY));
+  if ((state.dragging && state.card) || state.unitDrag) {
     // dragging a card toward a screen edge slides the shot that way so far plates stay reachable
     const w = canvas.clientWidth, h = canvas.clientHeight;
     const ex = e.clientX < w * 0.08 ? -1 : e.clientX > w * 0.92 ? 1 : 0;
@@ -229,7 +268,27 @@ canvas.addEventListener('pointerdown', (e) => {
   }
   downAt = { x: e.clientX, y: e.clientY };
   if (state.card) showGhost(tileAt(e.clientX, e.clientY));
+  else if (!busy() && game.mech.has('blocking')) {
+    const t = tileAt(e.clientX, e.clientY);
+    const u = t && game.unitAt(t.x, t.y);
+    state.unitDrag = u ? { u, x: e.clientX, y: e.clientY } : null;
+  }
 });
+
+function tryMove(tile) {
+  const u = state.moving;
+  state.moving = null;
+  state.unitDrag = null;
+  ghost.visible = false;
+  hud.hint('');
+  if (!u || !tile) return false;
+  if (game.move(u, tile.x, tile.y)) {
+    audio.sfx.place();
+    return true;
+  }
+  if (u.moveCd > 0) hud.hint(`${u.def.name} needs ${Math.ceil(u.moveCd)}s before moving again.`);
+  return false;
+}
 const endTouch = (e) => {
   touches.delete(e.pointerId);
   if (touches.size < 2) pinch = null;
@@ -242,9 +301,15 @@ window.addEventListener('pointerup', (e) => {
     return;
   }
   if (pinch || touches.size) return; // still mid-gesture
-  if (state.cine) return;
+  if (busy()) return;
   const overCanvas = e.target === canvas;
   const tile = overCanvas ? tileAt(e.clientX, e.clientY) : null;
+  if (state.moving && (state.unitDrag || overCanvas)) {
+    // finish a Blocking move (drag release, or the tap after MOVE)
+    const dragged = !!state.unitDrag;
+    if (tryMove(tile) || dragged) return;
+  }
+  state.unitDrag = null;
   if (state.dragging && state.card) {
     // released a dragged card over the arena -> place it
     state.dragging = false;
@@ -277,6 +342,7 @@ window.addEventListener('keydown', (e) => {
   }
   else if (e.key === 'Escape') {
     state.card = null;
+    state.moving = null;
     hud.setSelectedCard(null);
     ghost.visible = false;
     select(null);
@@ -286,16 +352,16 @@ document.addEventListener('visibilitychange', () => document.hidden && game.stat
 
 // ---------------------------------------------------------------- cut-ins
 async function playOneMore(unit, chain, baton) {
-  if (state.cine) return;
+  if (busy()) return;
   hud.oneMore(unit.type, chain, baton);
-  if (baton && state.firstBreak) {
+  if (baton && state.firstBreak && !storyOn) {
     state.firstBreak = false;
     hud.hint('POSTURE BREAK! Time slows: tap another unit before the gauge empties to BATON PASS.', 4200);
   }
 }
 
 function requestAllOut() {
-  if (state.cine || !game.allOutReady) return;
+  if (busy() || !game.allOutReady) return;
   state.cine = true;
   state.freezeReq = true; // grab the next rendered frame, then start the sequence
 }
@@ -306,54 +372,164 @@ async function runAllOut(frame) {
     fx.cardsRain(110, 6.5);
     rig.shake = 2;
     post.halftone.uniforms.uFlash.value = 0.8;
-  });
+  }, Object.keys(UNITS).filter((id) => game.onStage(id)));
   state.cine = false;
 }
 
+// ---------------------------------------------------------------- story + tutorial
+const uiRoot = document.getElementById('ui');
+const story = new StoryPlayer(uiRoot, portraits);
+const tutor = new Tutor(uiRoot, camera, {
+  ctx: () => ({ game, state }),
+  revealed: () => save.revealed,
+  avatar: (revealed) => (revealed ? portraits.cutin.prompter : story.art.promptbox),
+  world: (u) => view.unitView(u)?.base.clone().setY(1.3) ?? null,
+  onDone: (id) => {
+    if (!save.lessons.includes(id)) save.lessons.push(id);
+    writeSave(save);
+  },
+});
+
+/** Play a chapter's scene (once per run unless `force`). */
+async function playScene(id, force = false) {
+  if (!storyOn || !SCENES[id] || (!force && save.seen.includes(id))) return;
+  ghost.visible = false;
+  state.card = null;
+  hud.setSelectedCard(null);
+  select(null);
+  await story.play(SCENES[id], { perf: save.perf }, id);
+  if (!save.seen.includes(id)) save.seen.push(id);
+  if (id === 'promptbox') save.revealed = true; // the Prompter has told them about the loop
+  writeSave(save);
+  hud.setPerformance(save.perf, save.revealed);
+}
+
+/** Raise a chapter: its scene (first time), its lessons, then the curtain button. */
+async function enterChapter(idx, { scene = true } = {}) {
+  const ch = CAMPAIGN[idx];
+  if (scene) await playScene(ch.id);
+  hud.setPerformance(save.perf, save.revealed);
+  tutor.begin(ch.id, !storyOn || save.lessons.includes(ch.id));
+  hud.root.querySelector('.startbtn')?.remove();
+  hud.startButton(sandbox ? 'START SHOW' : 'RAISE THE CURTAIN', () => {
+    if (game.state === 'ready') game.start();
+    else game.next();
+    if (!storyOn) hud.hint('Break posture (yellow bar) → 1-MORE → Baton Pass. Down 3 Shadows → ALL-OUT!', 5000);
+  });
+  if (!tutor.active) hud.hint(idx === 0 ? 'Drag your Phantom beside the crimson runway.' : `${ch.label} · ${ch.title.toUpperCase()}`, 3200);
+}
+
 // ---------------------------------------------------------------- flow
-function newGame() {
+/** Start (or restart from a checkpoint) the show. `scene` plays the chapter scene if unseen. */
+function newGame(cp = null, { scene: withScene = true } = {}) {
   view.clear();
-  game = new Game();
+  game = makeGame(cp);
   view = new View(scene, fx, rig, audio.sfx, ctext);
+  onEvents(game.drain()); // restored units from the checkpoint
   rig.resetView();
   state.speed = 1;
+  state.moving = null;
   hud.setSpeed(1);
   togglePause(false);
   select(null);
   rig.estGoal = 0; // glide down from the establishing shot into the battle framing
-  hud.startButton('START SHOW', () => {
-    game.start();
-    hud.hint('Break posture (yellow bar) → 1-MORE → Baton Pass. Down 3 Shadows → ALL-OUT!', 5000);
-  });
-  hud.hint('Pick a Phantom below and drag it beside the crimson runway.', 0);
+  enterChapter(cp ? cp.waveIdx : 0, { scene: withScene });
 }
 
 function titleScreen() {
   rig.estGoal = 1;
+  const cont = !sandbox && save.cp && CAMPAIGN[save.cp.waveIdx];
   const ov = hud.overlay(`
     <div class="logo"><div class="a">ENCORE<br>PROTOCOL</div><div class="b">PHANTOM SHOWCASE</div></div>
     <div class="howto">
-      Shadows march down the crimson runway toward the <b>Treasure</b>.<br>
-      Drag <b>JESTER</b>, <b>QUEEN</b> and <b>ORACLE</b> onto the plates beside it.<br>
-      Empty a Shadow's <b>yellow posture bar</b> to shatter its mask → <b>1-MORE!</b><br>
-      Then tap another unit to <b>BATON PASS</b>. Down three at once → <b>ALL-OUT ATTACK</b>.
+      Every night at <b>11:59</b>, one stream plays on every screen in the city.<br>
+      <b>312</b> people watched it to the end. None of them have woken up.<br>
+      Tonight, you're on stage.
     </div>
-    <button class="startbtn live" style="position:static;transform:skewX(-12deg)"><span>ENTER</span></button>
+    <div class="titlebtns">
+      <button class="startbtn live" style="position:static;transform:skewX(-12deg)"><span>${cont ? 'NEW SHOW' : 'ENTER'}</span></button>
+      ${cont ? `<button class="startbtn live cont" style="position:static;transform:skewX(-12deg)"><span>CONTINUE · ${cont.label}</span></button>` : ''}
+    </div>
     <div class="tag">Unofficial, non-commercial fan showcase inspired by the Persona series' style. Not affiliated with ATLUS or SEGA.
-    Built-in models, designs and code are original.</div>`);
-  ov.querySelector('button').addEventListener('click', async () => {
+    Built-in models, designs, story and code are original.</div>`);
+  const go = async (cp) => {
     ov.remove();
     await assetsReady; // models are tiny next to the title screen dwell time; never place before they're in
+    if (!cp) {
+      // a fresh run: the story starts over, but the Prompter's performance count never resets
+      save.seen = [];
+      save.revealed = false;
+      save.cp = null;
+      writeSave(save);
+    }
+    newGame(cp);
+  };
+  ov.querySelector('.startbtn:not(.cont)').addEventListener('click', () => go(null));
+  ov.querySelector('.cont')?.addEventListener('click', () => go(save.cp));
+}
+
+/** The Treasure fell: the loop resets to the top of this chapter. */
+function loopReset() {
+  save.perf++;
+  writeSave(save);
+  const line = LOOP_LINES[save.perf % LOOP_LINES.length].replace('{perf}', save.perf);
+  const cp = game.checkpoint();
+  const ov = hud.overlay(`<div class="logo"><div class="a">CURTAIN<br>FALLS</div><div class="b">${game.chapter.label} · ${game.kills} SHADOWS SENT HOME</div></div>
+    ${storyOn ? `<div class="loopline"><b>PROMPTER</b>${line}</div>` : ''}
+    <button class="startbtn live" style="position:static;transform:skewX(-12deg)"><span>FROM THE TOP</span></button>`);
+  ov.querySelector('button').addEventListener('click', () => { ov.remove(); newGame(cp, { scene: false }); });
+  rig.estGoal = 1;
+}
+
+/** The show is over. */
+async function finale() {
+  fx.cardsRain(140, 7);
+  save.cp = null;
+  save.finished = true;
+  writeSave(save);
+  await playScene('ending', true);
+  const ov = hud.overlay(`<div class="logo"><div class="a">THE SHOW'S<br>OVER</div><div class="b">PERFORMANCE #${save.perf} · ${game.kills} SHADOWS SENT HOME</div></div>
+    <button class="startbtn live" style="position:static;transform:skewX(-12deg)"><span>ENCORE</span></button>`);
+  ov.querySelector('button').addEventListener('click', () => {
+    ov.remove();
+    save.perf++; // you asked for an encore. Of course you did.
+    save.seen = [];
+    save.revealed = false;
+    writeSave(save);
     newGame();
   });
+  rig.estGoal = 1;
+}
+
+/** A chapter's wave is cleared: checkpoint the next chapter, then raise it. */
+function intermission() {
+  const next = game.waveIdx + 1;
+  save.cp = { waveIdx: next, cash: game.cash, treasure: game.treasure, kills: game.kills, units: game.units.map((u) => ({ type: u.type, x: u.x, y: u.y, rank: u.rank, spent: u.spent })) };
+  writeSave(save);
+  hud.centerMsg('CURTAIN!', 1300);
+  select(null);
+  setTimeout(() => enterChapter(next), 1200);
 }
 
 function onEvents(events) {
   for (const ev of events) {
     view.onEvent(ev);
+    tutor.onEvent(ev);
     switch (ev.t) {
-      case 'wave':
-        hud.centerMsg(ev.boss ? 'CURTAIN CALL' : `WAVE ${ev.n}`, 1500);
+      case 'wave': {
+        const ch = CAMPAIGN[ev.n - 1];
+        hud.centerMsg(sandbox ? (ev.boss ? 'CURTAIN CALL' : `WAVE ${ev.n}`) : (ch?.label ?? `WAVE ${ev.n}`), 1500);
+        if (!sandbox) {
+          save.cp = game.checkpoint();
+          writeSave(save);
+        }
+        break;
+      }
+      case 'waveClear':
+        intermission();
+        break;
+      case 'join':
+        for (const id of ev.units) hud.centerMsg(`${UNITS[id].name} JOINS`, 1600);
         break;
       case 'oneMore':
         playOneMore(ev.unit, ev.chain, ev.baton);
@@ -368,21 +544,19 @@ function onEvents(events) {
       case 'baton':
         hud.centerMsg('BATON PASS', 900);
         break;
-      case 'won': {
-        const ov = hud.overlay(`<div class="logo"><div class="a">TREASURE<br>SECURED</div><div class="b">${game.treasure}/${game.rules.treasureHp} · ${game.kills} SHADOWS</div></div>
-          <button class="startbtn live" style="position:static;transform:skewX(-12deg)"><span>ENCORE</span></button>`);
-        ov.querySelector('button').addEventListener('click', () => { ov.remove(); newGame(); });
-        fx.cardsRain(140, 7);
-        rig.estGoal = 1;
+      case 'won':
+        if (storyOn) finale();
+        else {
+          const ov = hud.overlay(`<div class="logo"><div class="a">TREASURE<br>SECURED</div><div class="b">${game.treasure}/${game.rules.treasureHp} · ${game.kills} SHADOWS</div></div>
+            <button class="startbtn live" style="position:static;transform:skewX(-12deg)"><span>ENCORE</span></button>`);
+          ov.querySelector('button').addEventListener('click', () => { ov.remove(); newGame(); });
+          fx.cardsRain(140, 7);
+          rig.estGoal = 1;
+        }
         break;
-      }
-      case 'lost': {
-        const ov = hud.overlay(`<div class="logo"><div class="a">CURTAIN<br>FALLS</div><div class="b">WAVE ${game.waveIdx + 1} · ${game.kills} SHADOWS</div></div>
-          <button class="startbtn live" style="position:static;transform:skewX(-12deg)"><span>RETRY</span></button>`);
-        ov.querySelector('button').addEventListener('click', () => { ov.remove(); newGame(); });
-        rig.estGoal = 1;
+      case 'lost':
+        loopReset();
         break;
-      }
       default:
     }
   }
@@ -446,7 +620,7 @@ function loop() {
   if (!document.hidden) adapt(raw);
   const dt = Math.min(0.05, raw);
   t += dt;
-  const frozen = state.cine || state.paused;
+  const frozen = state.cine || state.paused || story.playing || tutor.hold;
   // a Baton Pass prompt runs in bullet-time on wall-clock time, so 2x speed doesn't shorten it
   const steps = game.baton ? 1 : state.speed;
   if (!frozen) {
@@ -470,6 +644,7 @@ function loop() {
   if (u.uFlash.value <= 0) u.uFlashColor.value.set(0xffffff);
   post.render(dt, t);
   hud.update(game);
+  tutor.update();
   if (state.freezeReq) {
     state.freezeReq = false;
     grab.width = canvas.width;
@@ -485,4 +660,4 @@ resize();
 requestAnimationFrame(loop);
 
 // debug / smoke-test handle
-window.__game = { get game() { return game; }, state, hud, audio, get view() { return view; }, rig, post, fx, scene, palace, assets, assetsReady, newGame, requestAllOut, select, ctext };
+window.__game = { get game() { return game; }, state, hud, audio, get view() { return view; }, rig, post, fx, scene, palace, assets, assetsReady, newGame, requestAllOut, select, ctext, story, tutor, save };
