@@ -219,3 +219,82 @@ function isolate(m, w, h, keepFrac, inner, near) {
   });
   for (let i = 0; i < N; i++) if (m[i] && !keep[label[i]]) m[i] = 0;
 }
+
+/**
+ * Clean a transparent pose frame cut from a sprite sheet: keep the figure (largest alpha blob) and
+ * the effects around it (sparks, drones, speedlines), and drop the sheet's leftovers: blobs that
+ * sit entirely below the figure's feet (the next row's heads) and small slivers on the frame's
+ * outer edge (neighbouring cells). Works in place on RGBA `data`.
+ * Returns { main: bbox of the figure, bbox: of everything kept, removed: blob count } with
+ * bboxes as { x0, y0, x1, y1 } (inclusive), or null when the frame is empty.
+ */
+export function cleanPose(data, w, h, { alphaMin = 25, sliver = 0.02 } = {}) {
+  const lab = new Int32Array(w * h).fill(-1);
+  const comps = [];
+  const stack = new Int32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    if (lab[i] >= 0 || data[i * 4 + 3] <= alphaMin) continue;
+    const id = comps.length;
+    const c = { n: 0, x0: w, y0: h, x1: -1, y1: -1 };
+    let sp = 0;
+    stack[sp++] = i;
+    lab[i] = id;
+    while (sp) {
+      const p = stack[--sp];
+      const x = p % w, y = (p / w) | 0;
+      c.n++;
+      if (x < c.x0) c.x0 = x;
+      if (x > c.x1) c.x1 = x;
+      if (y < c.y0) c.y0 = y;
+      if (y > c.y1) c.y1 = y;
+      for (let dy = -1; dy <= 1; dy++) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= h) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx;
+          if (xx < 0 || xx >= w) continue;
+          const q = yy * w + xx;
+          if (lab[q] < 0 && data[q * 4 + 3] > alphaMin) {
+            lab[q] = id;
+            stack[sp++] = q;
+          }
+        }
+      }
+    }
+    comps.push(c);
+  }
+  if (!comps.length) return null;
+  const main = comps.reduce((a, b) => (b.n > a.n ? b : a));
+  let cx0 = w, cx1 = -1;
+  for (const c of comps) {
+    cx0 = Math.min(cx0, c.x0);
+    cx1 = Math.max(cx1, c.x1);
+  }
+  const drop = new Uint8Array(comps.length);
+  let removed = 0;
+  comps.forEach((c, k) => {
+    if (c === main) return;
+    const below = c.y0 > main.y1;
+    // a cell cut: a small blob on the frame's outermost column, when that column hugs the canvas edge
+    const edge = c.n < main.n * sliver && ((c.x0 <= cx0 && cx0 <= w * 0.08) || (c.x1 >= cx1 && cx1 >= w * 0.92));
+    if (below || edge) {
+      drop[k] = 1;
+      removed++;
+    }
+  });
+  const bbox = { x0: w, y0: h, x1: -1, y1: -1 };
+  for (let i = 0; i < w * h; i++) {
+    const l = lab[i];
+    if (l < 0) continue;
+    if (drop[l]) {
+      data[i * 4 + 3] = 0;
+      continue;
+    }
+    const x = i % w, y = (i / w) | 0;
+    if (x < bbox.x0) bbox.x0 = x;
+    if (x > bbox.x1) bbox.x1 = x;
+    if (y < bbox.y0) bbox.y0 = y;
+    if (y > bbox.y1) bbox.y1 = y;
+  }
+  return { main: { x0: main.x0, y0: main.y0, x1: main.x1, y1: main.y1 }, bbox, removed };
+}

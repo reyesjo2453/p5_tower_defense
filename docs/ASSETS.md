@@ -78,6 +78,11 @@ For example `vanguard-strike.png` works for Jester and `medic-windup.png` works 
   pose's crop is reused for the other two so frames swap without jitter.
 - Draw the character **facing right**; `SPRITE_TWEAKS.<id>.face` mirrors it toward the target.
 - Any missing frame falls back to the idle pose, and a missing idle falls back to the sprite / cut-in.
+- Frames cut from a sheet are cleaned at load: blobs entirely below the figure's feet and small
+  slivers on the outermost column are dropped. All frames are cropped to one shared box (widest
+  extent, idle feet at the bottom), so wide strikes are never clipped.
+- `-left` copies aren't needed; the game mirrors the right-facing art itself.
+- Pose art in the base folder does not override a sprite or cut-in placed in `custom/`.
 
 ## What happens to an imported model (`src/render/gltfUnits.js`)
 
