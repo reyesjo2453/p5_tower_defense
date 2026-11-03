@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.3.0 – Billboard sprites & deploy cut-in
+
+- **2D billboard units**: a unit with a PNG but no `.glb` stands on its plate as a paper cut-out.
+  - It uses `<id>-sprite.png`, or else its cut-in PNG.
+  - The PNG is alpha-trimmed and shown as a vertical-axis billboard 1.8 units tall, feet on the plate.
+  - It has a white paper edge and a black ink outline.
+- **Breathing idle**: a sine bob (±0.04) and scale pulse (±2%), with a ground shadow that pulses in size and opacity, plus an attack squash and flash.
+- **Deploy cut-in**: placing a unit plays:
+  - a diagonal torn band with sliced borders and speedlines;
+  - the unit's cut-in art, plus red, green and yellow confetti;
+  - a 150 ms impact shake (skipped for reduced motion).
+- **Unit panel preview**: tapping a placed unit shows its portrait.
+- `npm run smoke:assets` now also tests the PNG-only billboard path.
+
 ## 1.2.0 – Drop-in art pipeline
 
 - **glTF unit models**: `public/models/{jester,queen,oracle}.glb`, with a git-ignored `custom/` override folder.

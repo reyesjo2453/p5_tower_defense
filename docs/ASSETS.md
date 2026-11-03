@@ -30,12 +30,15 @@ Lookup order for every file: `custom/` first, then the base folder, then the bui
 
 ## File names (`src/assets/manifest.js`)
 
-| Unit (archetype) | Model | Deploy card | 1-MORE + All-Out cut-in |
-|---|---|---|---|
-| Jester (Leader) | `jester.glb` | `jester-card.png` | `jester-cutin.png` |
-| Queen (Vanguard) | `queen.glb` | `queen-card.png` | `queen-cutin.png` |
-| Oracle (Tactician) | `oracle.glb` | `oracle-card.png` | `oracle-cutin.png` |
-| Finisher splash ("THE SHOW'S OVER") | | | `finisher.png` |
+| Unit (archetype) | Model | Standing sprite | Deploy card | Cut-in (deploy, 1-MORE, All-Out) |
+|---|---|---|---|---|
+| Jester (Leader) | `jester.glb` | `jester-sprite.png` | `jester-card.png` | `jester-cutin.png` |
+| Queen (Vanguard) | `queen.glb` | `queen-sprite.png` | `queen-card.png` | `queen-cutin.png` |
+| Oracle (Tactician) | `oracle.glb` | `oracle-sprite.png` | `oracle-card.png` | `oracle-cutin.png` |
+| Finisher splash ("THE SHOW'S OVER") | | | | `finisher.png` |
+
+- On the board, each unit uses the first of: its `.glb` model → its standing sprite PNG → its
+  cut-in PNG (while `SPRITE_FROM_CUTIN` is on) → the built-in procedural figure.
 
 - A card falls back to its unit's cut-in PNG, and then to the SVG silhouette.
 - `.gltf` with external textures also works. Keep the texture folder next to it and point the
@@ -62,6 +65,34 @@ Lookup order for every file: `custom/` first, then the base folder, then the bui
    - `height`.
    - `idle` / `attack` clip-name patterns.
 
+## What happens to a sprite unit (`src/render/spriteUnits.js`)
+
+A unit with a PNG but no model stands on its plate as a 2D paper cut-out:
+
+1. **Load and trim.** `THREE.TextureLoader` loads the PNG. Transparent margins are trimmed, so
+   the lowest opaque pixel touches the plate and the plane hugs the art.
+2. **Billboard.** A plane with `transparent: true, alphaTest: 0.1` turns on the vertical axis
+   only to face the camera. That keeps it upright and grounded, unlike a screen-aligned
+   `THREE.Sprite`, whose feet slide off the tile under a tilted camera.
+   - It is `SPRITE_HEIGHT` (1.8) tall: the bottom is at `y = 0` and the centre at 0.9.
+   - Behind it sit two silhouette layers, a white paper edge and a black ink outline.
+3. **Breathe.** Each frame, with a random phase per tower:
+   - `y = base + sin(t·3 + phase)·0.04`
+   - `scale.y = 1 + sin(t·3 + phase)·0.02`, pivoting at the feet.
+   - A soft ground shadow shrinks and fades as the body rises.
+   - Attacks add a squash, a lean, a brief flash and a lunge toward the target.
+4. **Tweak.** `SPRITE_TWEAKS` in the manifest:
+   - `height`, e.g. `1.1` for a small mascot-sized figure.
+   - `breath`: the bob amplitude.
+   - `face: 'right' | 'left'`: the way the art faces. When set, the sprite mirrors to face its target.
+
+Placing a unit also plays the **deploy cut-in**:
+- A diagonal torn band with sliced borders and speedlines.
+- The unit's cut-in art, plus red, green and yellow confetti.
+- A 150 ms screen shake (skipped when the player prefers reduced motion).
+
+It never blocks input.
+
 The folder index comes from a small Vite plugin (`scripts/asset-index-plugin.js`, exposed as
 `virtual:asset-index`). The game knows which files exist without probing for 404s, and in
 `npm run dev`, adding or removing a file reloads the page.
@@ -78,7 +109,8 @@ The folder index comes from a small Vite plugin (`scripts/asset-index-plugin.js`
 npm run assets:placeholder   # copy them into the custom/ folders (git-ignored)
 npm run dev                  # see them in game
 npm run assets:clean         # back to the built-in art
-npm run smoke:assets         # install, build, run the browser e2e test with glTF/PNG checks, clean up
+node scripts/placeholder-assets.cjs install sprites   # PNGs only: units stand as 2D billboards
+npm run smoke:assets         # e2e test of both paths (glTF + PNGs, then PNG-only billboards), clean up
 ```
 
 `window.__game.assets` reports which PNGs resolved and which models loaded or failed.

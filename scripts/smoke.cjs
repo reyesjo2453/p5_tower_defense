@@ -40,6 +40,33 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
     await page.touchscreen.tap(pt.x, pt.y);
     await page.waitForFunction(() => window.__game.game.units.length > 0, null, { timeout: T(5000) }).catch(() => {});
     ok((await G(() => window.__game.game.units.map((u) => `${u.type}@${u.x},${u.y}`).join())) === 'jester@6,3', 'touch placement on a build plate');
+    ok((await G(() => window.__game.hud.lastDeploy)) === 'jester', 'deploy cut-in fires on placement');
+    if (process.env.SMOKE_SPRITES) {
+      // billboard pipeline: cut-in PNG as a camera-facing cut-out, 1.8 tall, feet on the plate, breathing
+      await page.waitForFunction(() => window.__game.view.units.size > 0 && [...window.__game.view.units.values()][0].spawnT >= 1, null, { timeout: T(20000) });
+      const read = () => G(() => {
+        const w = window.__game;
+        const v = [...w.view.units.values()][0];
+        const art = v.model.parts.art;
+        art.updateMatrixWorld(true);
+        const box = new art.geometry.boundingBox.constructor().setFromObject(art);
+        return { sprite: !!v.model.sprite, h: box.max.y - box.min.y, minY: box.min.y, base: v.base.y, bodyY: v.model.parts.body.position.y,
+          sh: v.model.parts.shadow.material.opacity, loaded: w.assets.sprites.loaded.map((l) => l.id).sort().join(), models: w.assets.models.loaded.length,
+          tex: v.model.parts.art.material.map.image.src };
+      });
+      await G(() => window.__game.view.units.values().next().value.model.parts.art.geometry.computeBoundingBox());
+      const a = await read();
+      ok(a.models === 0 && a.loaded === 'jester,oracle,queen', `sprites loaded for units without a .glb (${a.loaded})`);
+      ok(a.sprite && /custom\/jester-cutin\.png$/.test(a.tex), 'placed unit is a billboard of its cut-in PNG');
+      ok(Math.abs(a.h - 1.8) < 0.12, `billboard height ~1.8 (got ${a.h.toFixed(3)})`);
+      ok(Math.abs(a.minY - a.base) < 0.07, `feet on the plate (minY ${a.minY.toFixed(3)} vs plate ${a.base.toFixed(3)})`);
+      const t0 = await G(() => window.__game.view.time);
+      await page.waitForFunction((t) => window.__game.view.time > t + 0.15, t0, { timeout: T(20000) });
+      const b = await read();
+      ok(Math.abs(a.bodyY) <= 0.041 && a.bodyY !== b.bodyY && a.sh !== b.sh, `breathing bob + shadow pulse animate (y ${a.bodyY.toFixed(4)}->${b.bodyY.toFixed(4)}, shadow ${a.sh.toFixed(3)}->${b.sh.toFixed(3)})`);
+      require('node:fs').mkdirSync(path.join(__dirname, '..', 'shots'), { recursive: true });
+      await page.screenshot({ path: path.join(__dirname, '..', 'shots', 'sprites-board.png') });
+    }
     if (process.env.SMOKE_ASSETS) {
       // drop-in pipeline: glTF figure, Box3-normalized to ~1.8 with feet on the plate, animated by its clips
       await page.waitForFunction(() => window.__game.view.units.size > 0 && [...window.__game.view.units.values()][0].spawnT >= 1, null, { timeout: T(20000) });

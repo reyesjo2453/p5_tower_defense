@@ -9,8 +9,9 @@ import { View, CameraRig } from './render/view.js';
 import { Hud } from './ui/hud.js';
 import { buildPalace } from './render/palace.js';
 import { silhouetteURL } from './ui/silhouettes.js';
-import { modelURLs, portraitURLs } from './assets/resolve.js';
-import { loadUnitModels } from './render/gltfUnits.js';
+import { modelURLs, portraitURLs, spriteURLs } from './assets/resolve.js';
+import { loadUnitModels, hasUnitModel } from './render/gltfUnits.js';
+import { loadUnitSprites } from './render/spriteUnits.js';
 
 const params = new URLSearchParams(location.search);
 const coarse = matchMedia('(pointer: coarse)').matches;
@@ -67,9 +68,16 @@ for (const key of portraits.png) {
   img.decoding = 'async';
   img.src = kind === 'finisher' ? portraits.finisher : portraits[kind][id]; // warm the cache before the first cut-in
 }
-// drop-in glTF unit models (public/models[/custom]); units without one keep their procedural figure
-const assets = { portraits: [...portraits.png], models: null };
-const assetsReady = loadUnitModels(modelURLs()).then((s) => { assets.models = s; });
+// drop-in glTF unit models (public/models[/custom]); units without one stand as a 2D billboard when
+// they have a sprite/cut-in PNG, else keep their procedural figure
+const assets = { portraits: [...portraits.png], models: null, sprites: null };
+const assetsReady = loadUnitModels(modelURLs())
+  .then((s) => {
+    assets.models = s;
+    const urls = Object.fromEntries(Object.entries(spriteURLs()).filter(([id]) => !hasUnitModel(id)));
+    return loadUnitSprites(urls);
+  })
+  .then((s) => { assets.sprites = s; });
 const state = { speed: 1, paused: false, cine: false, selected: null, card: null, dragging: false, freezeReq: null, firstBreak: true };
 const hud = new Hud(document.getElementById('ui'), portraits, {
   cardDown(id) {
@@ -135,6 +143,7 @@ function showGhost(tile) {
 function tryPlace(tile) {
   if (!state.card || !tile) return false;
   if (game.place(state.card, tile.x, tile.y)) {
+    hud.deployCutIn(state.card);
     if (game.state === 'ready') hud.hint('Nice. Place a few more, then hit START.');
     state.card = null;
     hud.setSelectedCard(null);
