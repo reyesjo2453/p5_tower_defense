@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.1 – Asset aliases & keyed billboards
+
+- **File-name aliases**: each unit also accepts its alias names, with `-` or `_`:
+  - Jester: `vanguard-cutin.png` / `vanguard_cutin.png` (and `-sprite`, `-card`).
+  - Queen: `guard-*`. Oracle: `tactician-*`.
+  - HUD cards, the unit panel, deploy / 1-MORE / All-Out cut-ins and billboards all use them. Anything in `custom/` still wins.
+- **Keyed billboards**: card-style art (opaque edges) is keyed at load for the board only:
+  - uniform frame lines are stripped, then the near-black backdrop (max RGB < 18) is flood-filled away from the edges;
+  - black enclosed by the figure survives, and stray text and stars are dropped.
+  - Cards and cut-in overlays keep the full art. `SPRITE_KEY` in the manifest tunes or disables it.
+
 ## 1.3.0 – Billboard sprites & deploy cut-in
 
 - **2D billboard units**: a unit with a PNG but no `.glb` stands on its plate as a paper cut-out.
