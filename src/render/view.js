@@ -385,6 +385,18 @@ export class View {
         break;
       }
       case 'leak': this.removeEnemy(ev.enemy, 'leak'); this.rig.shake = Math.max(this.rig.shake, 1); break;
+      case 'warded':
+        // Ghostlight's ward eats the hit
+        this.removeEnemy(ev.enemy, 'kill');
+        this.fx.ring(new THREE.Vector3(0, 0.5, 0), 0xffd400, 3, 0.4);
+        this.text?.callout(TREASURE_P.clone().setY(TREASURE_P.y + 0.4), 'WARDED!');
+        break;
+      case 'push': {
+        // Curtain Wind: glide back up the runway instead of teleporting
+        const v = this.enemies.get(ev.enemy.uid);
+        if (v) v.slide = 0.35;
+        break;
+      }
       case 'attack': {
         const v = this.units.get(ev.unit.uid);
         const ev2 = this.enemies.get(ev.enemy.uid);
@@ -686,7 +698,13 @@ export class View {
         v.freeze -= dt; // hit-stop: hold pose and position on the impact frame
         continue;
       }
-      root.position.set(e.x - 5, RUNWAY_H, e.y - 5);
+      if (v.slide > 0) {
+        v.slide -= dt;
+        const k = Math.min(1, dt * 12);
+        root.position.x += (e.x - 5 - root.position.x) * k;
+        root.position.z += (e.y - 5 - root.position.z) * k;
+        root.position.y = RUNWAY_H + Math.sin(Math.max(0, v.slide) / 0.35 * Math.PI) * 0.5;
+      } else root.position.set(e.x - 5, RUNWAY_H, e.y - 5);
       const want = Math.atan2(e.dirX, e.dirY);
       let dy = want - root.rotation.y;
       dy = Math.atan2(Math.sin(dy), Math.cos(dy));

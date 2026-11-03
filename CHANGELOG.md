@@ -1,5 +1,42 @@
 # Changelog
 
+## 3.0.0 – Fifteen stages, Personas, one thing at a time
+
+- **Fifteen story stages instead of eight one-wave chapters.** Each stage is its own map with 3–5
+  waves and a short break between waves (CALL brings the next wave early). The story's twists are
+  unchanged but spaced out, with seven new scenes between them (*Opening Night*, *No One*, *Two
+  Doors*, *Crosstalk*, *The Green Room*, *Room 312*, *The Music Box*).
+- **Procedurally generated stages** (`src/sim/stagegen.js`). Runways are generated from a seed and a
+  difficulty tier, from long winding runways (easy) to short direct ones (hard), with 1–3 lanes
+  that never touch. Story stages use fixed seeds, so everyone plays the same tested map.
+- **A gentler start.** The first two stages are Jester alone on one lane. Summons are taught in
+  stage 3, then a new cast member joins about every two stages. The second lane opens in stage 5
+  and the third in stage 13.
+- **Persona summons.** Posture breaks and kills fill a shared SP gauge. Tap a Persona, then tap the
+  runway (time slows while you aim):
+  - **NO ONE** (Jester): Curtain Wind pushes a crowd back down the runway. It becomes
+    **HARLEQUIN**, and pushes further, once Jester remembers who he is.
+  - **VERDICT** (Queen): Gavel Drop stuns a crowd and cracks its posture.
+  - **SIGHTLINE** (Oracle): Spotlight marks a whole crowd.
+  - **GHOSTLIGHT** (Prompter): patches the Treasure, wards off its next three hits and slows the circle.
+  - **FLASHPAPER** (Limelight): a ring of fire that burns and slows anything crossing it.
+- **Less to manage at once.**
+  - The All-Out Attack is now the full-SP ultimate instead of a second meter.
+  - Baton Pass aims itself: tap the prompt and the best-placed ally gets the buff.
+  - Moving units waits for Act III.
+- **Telegraphs**: the spawn gate the next wave will use lights up with a yellow arrow, and a wave
+  counter shows progress.
+- **Rehearsal mode** (from the title once you reach stage 3): a new random stage every run, in five
+  tiers that open up as the story goes on.
+- Later stages start with more ¥, so most of the cast can be fielded before the curtain.
+- Baton Pass chains add +10% damage per link, capped at five links (the old uncapped chain made late
+  stages trivial).
+- `?stage=N` jumps to a campaign stage; `?rehearsal=T&seed=S` opens a Rehearsal; `?unlock=all`
+  still opens the classic two-lane sandbox.
+- Tests: generator invariants, every story stage winnable by the autoplayer and lost doing
+  nothing, early stages forgiving, late stages lost without the mechanics or without rank-ups, and
+  each Persona's effect. Saves from 2.x restart the story; the performance count carries over.
+
 ## 2.0.0 – ENCORE PROTOCOL: the story campaign
 
 - **Story campaign** in three acts and eight chapters (`src/story/script.js`, played by `src/ui/story.js`):

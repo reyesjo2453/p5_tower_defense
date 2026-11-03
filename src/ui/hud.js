@@ -71,14 +71,22 @@ export class Hud {
       this.deck.appendChild(c);
     }
     r.appendChild(this.deck);
+    // shared SP gauge + one Persona button per Phantom on stage (hidden until summons unlock)
+    this.spbar = $(`<div class="spbar" style="display:none">
+      <div class="sp"><b>SP</b><div class="gauge"><i data-k="spfill"></i><u></u><u></u><u></u></div><small data-k="sptxt">0</small></div>
+      <div class="personas" data-k="personas"></div>
+    </div>`);
+    r.appendChild(this.spbar);
+    this.waveChip = $('<div class="wavechip" style="display:none"><span data-k="wavetxt">WAVE 1/3</span><button class="live call" data-act="call">CALL ▶</button></div>');
+    r.appendChild(this.waveChip);
     this.panel = $(`<div class="unitpanel"><img class="pv" alt="" data-k="pimg"><h3 data-k="pname">UNIT</h3><div class="pips" data-k="prank"></div><p data-k="pdesc"></p>
       <div class="pbtns"><button class="live baton" data-act="baton">BATON PASS ▶</button><button class="live rank" data-act="rank">RANK UP</button><button class="live move" data-act="move">MOVE</button><button class="live" data-act="sell">SELL</button><button class="live" data-act="close">✕</button></div></div>`);
     r.appendChild(this.panel);
     this.hintEl = $('<div class="hint" style="display:none"></div>');
     r.appendChild(this.hintEl);
     r.addEventListener('click', (e) => {
-      const act = e.target.closest('[data-act]')?.dataset.act;
-      if (act) this.h.action(act);
+      const el = e.target.closest('[data-act]');
+      if (el) this.h.action(el.dataset.act, el);
     });
     this.allOutBtn = null;
   }
@@ -163,12 +171,15 @@ export class Hud {
     this.top.querySelector('[data-act="pause"] span').textContent = p ? '▶' : '❚❚';
   }
 
-  update(game) {
-    const ch = game.chapter;
-    if (ch && this.q('act').textContent !== ch.label) {
+  update(game, ui = {}) {
+    const ch = game.title ?? game.chapter;
+    if (ch && (this.q('act').textContent !== ch.label || this.q('ctitle').textContent !== ch.title.toUpperCase())) {
       this.q('act').textContent = ch.label;
       this.q('ctitle').textContent = ch.title.toUpperCase();
     }
+    this.spGauge(game, ui.aiming);
+    this.waveInfo(game);
+    if (game.state !== 'ready') this.root.querySelector(':scope > .startbtn')?.remove(); // started some other way
     // the cast: a card appears when its Phantom joins the story; a Phantom on stage greys its card
     for (const c of this.deck.children) {
       const id = c.dataset.unit;
@@ -187,12 +198,73 @@ export class Hud {
     this.batonPrompt(game);
     const ready = game.allOutReady && !this.suppress;
     if (ready && !this.allOutBtn) {
-      this.allOutBtn = $('<button class="allout-btn live" data-act="allout"><span><small>TAP · FINISHER</small>ALL-OUT ATTACK</span></button>');
+      this.allOutBtn = $('<button class="allout-btn live" data-act="allout"><span><small>SP FULL · FINISHER</small>ALL-OUT ATTACK</span></button>');
       this.root.appendChild(this.allOutBtn);
     } else if (!ready && this.allOutBtn) {
       this.allOutBtn.remove();
       this.allOutBtn = null;
     }
+  }
+
+  // ---------------------------------------------------------------- SP gauge + Personas
+  /** The SP gauge and the Persona buttons (one per Phantom on stage; lit when affordable). */
+  spGauge(game, aiming) {
+    const on = game.mech.has('summon') || game.mech.has('allout');
+    this.spbar.style.display = on ? '' : 'none';
+    if (!on) return;
+    const max = game.rules.spMax;
+    this.q('spfill').style.transform = `scaleX(${(game.sp / max).toFixed(3)})`;
+    const txt = String(Math.floor(game.sp));
+    if (this.q('sptxt').textContent !== txt) this.q('sptxt').textContent = txt;
+    this.spbar.classList.toggle('full', game.sp >= max && game.mech.has('allout'));
+    const box = this.q('personas');
+    const ids = game.mech.has('summon') ? game.units.map((u) => u.type) : [];
+    const key = ids.join(',') + (game.personaWhole ? '+' : '');
+    if (box.dataset.key !== key) {
+      box.dataset.key = key;
+      box.innerHTML = ids.map((id) => {
+        const u = game.onStage(id);
+        const p = game.persona(u);
+        return `<button class="persona-btn live accent-${id}" data-act="persona" data-p="${id}" title="${p.skill}: ${p.blurb}">
+          ${this.portraits.card[id] ? `<img alt="" src="${this.portraits.card[id]}">` : ''}<span class="pn">${p.name}</span><span class="pc">${p.cost}</span></button>`;
+      }).join('');
+    }
+    for (const b of box.children) {
+      const id = b.dataset.p;
+      const u = game.onStage(id);
+      if (!u) continue;
+      b.classList.toggle('ready', game.sp >= u.def.persona.cost && game.state === 'running');
+      b.classList.toggle('aim', aiming === id);
+    }
+  }
+
+  /** Wave counter; between waves a countdown with CALL (bring the next wave now). */
+  waveInfo(game) {
+    const show = game.state === 'running';
+    this.waveChip.style.display = show ? '' : 'none';
+    if (!show) return;
+    const total = game.waves.length;
+    const between = game.breakT != null;
+    const txt = between ? `NEXT WAVE ${game.waveIdx + 2}/${total} · ${Math.ceil(game.breakT)}s` : `WAVE ${game.waveIdx + 1}/${total}`;
+    const el = this.q('wavetxt');
+    if (el.textContent !== txt) el.textContent = txt;
+    this.waveChip.classList.toggle('between', between);
+  }
+
+  /** Persona summon flourish: a torn band with the Persona's name and skill over the board. */
+  summonCutIn(unitId, persona) {
+    const def = UNITS[unitId];
+    this.root.querySelector('.summon-cut')?.remove();
+    const art = this.portraits.cutin[unitId];
+    const el = $(`<div class="summon-cut accent-${unitId}">
+      <div class="band" style="clip-path:${TEX.tornDeploy}"><div class="lines" style="background-image:url(&quot;${TEX.speedDeploy}&quot;)"></div></div>
+      ${art ? `<img class="art" alt="" src="${art}">` : ''}
+      <div class="txt"><small>${def.name.toUpperCase()} · PERSONA!</small><b>${persona.name}</b><i>${persona.skill}</i></div>
+    </div>`);
+    this.root.appendChild(el);
+    this.impact(180);
+    setTimeout(() => el.classList.add('out'), 900);
+    setTimeout(() => el.remove(), 1200);
   }
 
   // ---------------------------------------------------------------- Baton Pass prompt (bullet-time)
@@ -211,10 +283,10 @@ export class Hud {
     this.vignette.style.display = slow > 0.01 ? '' : 'none';
     if (b && !this.batonEl) {
       const C = (2 * Math.PI * 26).toFixed(2);
-      this.batonEl = $(`<div class="baton-prompt" role="timer" aria-live="polite">
+      this.batonEl = $(`<div class="baton-prompt live" role="button" data-act="batonpass" aria-live="polite">
         <svg viewBox="0 0 64 64" class="gauge"><circle class="bg" cx="32" cy="32" r="26"/><circle class="fg" cx="32" cy="32" r="26" stroke-dasharray="${C}" stroke-dashoffset="0"/></svg>
         <b data-bt="secs">3.5</b>
-        <div class="txt"><span>BATON PASS</span><small>TAP AN ALLY</small></div>
+        <div class="txt"><span>BATON PASS</span><small data-bt="to">TAP TO PASS</small></div>
         <i class="bar"><i data-bt="bar"></i></i>
       </div>`);
       this.batonEl.dataset.c = C;
@@ -232,6 +304,10 @@ export class Hud {
       el.querySelector('[data-bt="secs"]').textContent = Math.max(0, b.t).toFixed(1);
       el.querySelector('[data-bt="bar"]').style.transform = `scaleX(${frac.toFixed(3)})`;
       el.classList.toggle('low', frac < 0.3);
+      const to = game.batonTarget();
+      const lbl = to ? `TAP · TO ${to.def.name}` : 'TAP TO PASS';
+      const tl = el.querySelector('[data-bt="to"]');
+      if (tl.textContent !== lbl) tl.textContent = lbl;
     }
   }
 
