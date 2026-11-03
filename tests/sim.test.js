@@ -171,3 +171,46 @@ test('waves are well-formed', () => {
     assert.ok(grp.count > 0 && grp.gap > 0);
   }
 });
+
+test('baton prompt: bullet-time slow-mo, 3.5 s real-time window, per-lane cooldown', () => {
+  const g = new Game();
+  g.state = 'running';
+  g.waveIdx = 99;
+  const a = g.place('queen', 1, 1);
+  g.place('jester', 2, 1);
+  const e = g.spawn('brute', 'a');
+  e.posture = 1;
+  g.damage(a, e, 1, 5);
+  assert.ok(g.baton && g.baton.lane === 'a' && g.baton.t === 3.5);
+  assert.ok(g.drain().find((x) => x.t === 'oneMore').baton);
+  run(g, 1);
+  assert.ok(g.timeScale < 0.26, `eases into bullet-time (${g.timeScale})`);
+  assert.ok(Math.abs(g.baton.t - 2.5) < 0.05, 'window counts real (unscaled) seconds');
+  run(g, 2.6);
+  assert.equal(g.baton, null, 'prompt expires after 3.5 s');
+  run(g, 1);
+  assert.ok(g.timeScale > 0.95, `eases back to full speed (${g.timeScale})`);
+  // same lane inside the cooldown: still a 1-MORE, but no new prompt
+  const e2 = g.spawn('brute', 'a');
+  e2.posture = 1;
+  g.damage(a, e2, 1, 5);
+  assert.equal(g.baton, null);
+  assert.equal(g.drain().find((x) => x.t === 'oneMore').baton, false);
+  // the other lane has its own cooldown
+  const e3 = g.spawn('brute', 'b');
+  e3.posture = 1;
+  g.damage(a, e3, 1, 5);
+  assert.ok(g.baton && g.baton.lane === 'b');
+});
+
+test('hit events flag crits (DOWN bonus) and weakness (marked posture)', () => {
+  const g = new Game();
+  g.state = 'running';
+  const e = g.spawn('brute', 'a');
+  e.mark = 2;
+  g.damage(null, e, 1, 5);
+  assert.ok(g.drain().find((x) => x.t === 'hit').weak);
+  e.down = 1;
+  g.damage(null, e, 1, 0);
+  assert.ok(g.drain().find((x) => x.t === 'hit').crit);
+});

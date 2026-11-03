@@ -21,7 +21,9 @@ export class Game {
     this.waveTimer = 0;
     this.state = 'ready'; // ready | running | won | lost
     this.hitStop = 0;
-    this.baton = null; // { from, t } window to pass after a 1-MORE
+    this.baton = null; // { from, t, lane } window to pass after a 1-MORE
+    this.laneCd = {}; // lane (path id) -> seconds until it may open another Baton Pass prompt
+    this.timeScale = 1; // eases to rules.bulletTime while a prompt is open (bullet-time)
     this.chain = 0;
     this.kills = 0;
     this.uid = 1;
@@ -111,17 +113,17 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- loop
+  /**
+   * Advance by `dt` real seconds. The Baton Pass prompt and the lane cooldowns count real time; the
+   * rest of the world runs at `timeScale`, which eases down to bullet-time while a prompt is open.
+   */
   update(dt) {
     if (this.state !== 'running') return;
-    if (this.hitStop > 0) {
-      this.hitStop = Math.max(0, this.hitStop - dt);
-      return;
-    }
-    this.time += dt;
-    this.cash += this.rules.income * dt;
-    this.updateWaves(dt);
-    for (const e of [...this.enemies]) this.updateEnemy(e, dt);
-    for (const u of this.units) this.updateUnit(u, dt);
+    const r = this.rules;
+    const goal = this.baton ? r.bulletTime : 1;
+    this.timeScale += (goal - this.timeScale) * (1 - Math.exp(-dt * r.bulletEase));
+    if (Math.abs(goal - this.timeScale) < 1e-3) this.timeScale = goal;
+    for (const k in this.laneCd) this.laneCd[k] = Math.max(0, this.laneCd[k] - dt);
     if (this.baton) {
       this.baton.t -= dt;
       if (this.baton.t <= 0) {
@@ -130,6 +132,16 @@ export class Game {
         this.emit('batonExpire');
       }
     }
+    if (this.hitStop > 0) {
+      this.hitStop = Math.max(0, this.hitStop - dt);
+      return;
+    }
+    dt *= this.timeScale;
+    this.time += dt;
+    this.cash += this.rules.income * dt;
+    this.updateWaves(dt);
+    for (const e of [...this.enemies]) this.updateEnemy(e, dt);
+    for (const u of this.units) this.updateUnit(u, dt);
   }
 
   nextWave() {
@@ -271,15 +283,18 @@ export class Game {
 
   damage(u, e, dmg, posture, { raw = false } = {}) {
     if (!this.enemies.includes(e)) return;
-    if (!raw && e.down > 0) dmg *= this.rules.downDmgMul;
+    // crit: striking a broken (DOWN) Shadow; weak: posture damage into an Oracle mark
+    const crit = !raw && e.down > 0;
+    const weak = e.down <= 0 && posture > 0 && e.mark > 0;
+    if (crit) dmg *= this.rules.downDmgMul;
     e.hp -= dmg;
     e.flash = 0.1;
     if (e.down <= 0 && posture > 0) {
-      const mul = e.mark > 0 ? UNITS.oracle.mark.postureMul : 1;
+      const mul = weak ? UNITS.oracle.mark.postureMul : 1;
       e.posture -= posture * mul;
       if (e.posture <= 0) this.breakPosture(u, e);
     }
-    this.emit('hit', { unit: u, enemy: e, dmg });
+    this.emit('hit', { unit: u, enemy: e, dmg, crit, weak, raw });
     if (e.hp <= 0) {
       this.removeEnemy(e);
       this.cash += e.def.reward;
@@ -297,8 +312,15 @@ export class Game {
       // 1 MORE: the breaker acts again immediately and may pass the baton.
       u.cd = 0;
       this.chain++;
-      if (this.units.length > 1) this.baton = { from: u, t: this.rules.batonWindow };
-      this.emit('oneMore', { unit: u, chain: this.chain });
+      // Baton Pass prompt (bullet-time), at most one per lane every batonCooldown seconds
+      const lane = e.path;
+      let prompt = false;
+      if (this.units.length > 1 && !this.baton && !(this.laneCd[lane] > 0)) {
+        this.baton = { from: u, t: this.rules.batonWindow, max: this.rules.batonWindow, lane };
+        this.laneCd[lane] = this.rules.batonCooldown;
+        prompt = true;
+      }
+      this.emit('oneMore', { unit: u, chain: this.chain, baton: prompt });
     }
   }
 }

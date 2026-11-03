@@ -1,17 +1,26 @@
 // Scene graph <-> simulation sync: models for units/enemies, animation, bars, FX dispatch,
-// and the camera rig (close (0, 9, 8) framing, -6deg Dutch roll, spring punch-ins with a -8deg tilt).
+// and the camera rig (close (0, 9, 8) framing, -6deg Dutch roll, spring punch-ins with a -8deg tilt,
+// a player zoom/pan layer on top, and directional micro-impulses on hits).
 import * as THREE from 'three';
 import { BUILDERS, buildShadow } from './models.js';
 import { instantiateUnit } from './gltfUnits.js';
-import { instantiateSprite } from './spriteUnits.js';
+import { instantiateSprite, ATTACK } from './spriteUnits.js';
+import { CombatEffects, threatRing } from './combatEffects.js';
 import { world, RUNWAY_H, SLOT_H } from './arena.js';
 
 const DUTCH = THREE.MathUtils.degToRad(-6); // resting Dutch roll
 const PUNCH_DUTCH = THREE.MathUtils.degToRad(-8); // roll while a strike punch-in holds
 const DIR = new THREE.Vector3(0, 9, 8).normalize(); // default camera at (0, 9, 8) looking at the origin
 const BASE_DIST = Math.hypot(9, 8);
-const FOV_MIN = 34;
-const FOV_MAX = 56;
+const FOV_MIN = 32;
+// player zoom: 1 = the whole board fitted; the default sits ~30% closer so figures read large
+export const ZOOM_DEFAULT = 0.7;
+export const ZOOM_MIN = 0.42;
+export const ZOOM_MAX = 1.05;
+const MIN_DIST = 4.6; // never closer than this to the focus (keeps the near plane off the floor tiles)
+const PAN_X = 5.4, PAN_Z = 4.4; // how far the focus may wander when fully zoomed in
+const KICK_T = 0.09; // directional hit impulse decay (s)
+const FOV_MAX = 40; // past this the camera backs off instead (a long lens keeps the flat 2.5D look)
 // what must stay on screen: every build slot (x +-5.6, z +-4.6) plus figure height at the back
 const FIT_PTS = [];
 for (const x of [-5.6, 5.6]) for (const z of [-4.6, 4.6]) for (const y of [0, 1.4]) FIT_PTS.push(new THREE.Vector3(x, y, z));
@@ -39,6 +48,7 @@ export class CameraRig {
     this.baseDist = BASE_DIST;
     this.since = 99;
     this._probe = new THREE.PerspectiveCamera();
+    this._look = new THREE.Vector3();
     // establishing shot (title / results): a low drifting angle that shows off the Palace skyline.
     // est = 1 fully establishing, 0 = gameplay framing; blended with an eased slerp.
     this.est = 1;
@@ -48,6 +58,68 @@ export class CameraRig {
     this._estCam = new THREE.PerspectiveCamera(); // a camera so lookAt() aims down -Z
     this._gp = new THREE.Vector3();
     this._gq = new THREE.Quaternion();
+    // player framing layer (wheel / pinch / two-finger pan), eased so input never jerks the shot
+    this.user = ZOOM_DEFAULT;
+    this.userGoal = ZOOM_DEFAULT;
+    this.pan = new THREE.Vector3();
+    this.panGoal = new THREE.Vector3();
+    this.follow = new THREE.Vector3(); // where the action is (auto-framing target)
+    this.manualT = 99; // seconds since the player last zoomed / panned
+    // directional micro-impulse (hit camera punch)
+    this.kickDir = new THREE.Vector3();
+    this.kickAmt = 0;
+    this.kickT = KICK_T;
+  }
+
+  /** Multiply the player zoom goal (<1 = closer); clamped to [ZOOM_MIN, ZOOM_MAX]. */
+  zoomBy(f) {
+    this.manualT = 0;
+    this.userGoal = THREE.MathUtils.clamp(this.userGoal * f, ZOOM_MIN, ZOOM_MAX);
+    this.clampPan(this.panGoal, this.userGoal);
+  }
+
+  /** Pan the focus by a screen-space drag (CSS px); h = canvas CSS height. */
+  panBy(dx, dy, h) {
+    const d = this.baseDist * this.user;
+    const wpp = (2 * d * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2)) / Math.max(1, h);
+    this.manualT = 0;
+    this.panGoal.x -= dx * wpp;
+    this.panGoal.z -= (dy * wpp) / DIR.y; // ground is foreshortened by the camera pitch
+    this.clampPan(this.panGoal, this.userGoal);
+  }
+
+  /** Nudge the focus toward a world point (used to keep a dragged card's target in view). */
+  panToward(p, k) {
+    this.panGoal.x += (p.x - this.panGoal.x) * k;
+    this.panGoal.z += (p.z - this.panGoal.z) * k;
+    this.clampPan(this.panGoal, this.userGoal);
+  }
+
+  clampPan(v, zoom) {
+    const room = THREE.MathUtils.clamp((ZOOM_MAX - zoom) / (ZOOM_MAX - ZOOM_MIN), 0, 1);
+    v.x = THREE.MathUtils.clamp(v.x, -PAN_X * room, PAN_X * room);
+    v.z = THREE.MathUtils.clamp(v.z, -PAN_Z * room, PAN_Z * room);
+    v.y = 0;
+  }
+
+  /** Auto-framing: drift toward `p` (centre of the action) while the player isn't steering. */
+  setFollow(p) {
+    this.follow.set(p.x, 0, p.z);
+  }
+
+  resetView() {
+    this.manualT = 99;
+    this.userGoal = ZOOM_DEFAULT;
+    this.panGoal.set(0, 0, 0);
+  }
+
+  /** Directional micro-impulse: shove the camera `amt` units along `dir`, decaying over ~90 ms. */
+  kick(dir, amt = 0.05) {
+    this.kickDir.copy(dir).setY(0);
+    if (this.kickDir.lengthSq() < 1e-8) return;
+    this.kickDir.normalize();
+    this.kickAmt = amt;
+    this.kickT = 0;
   }
 
   /**
@@ -110,7 +182,7 @@ export class CameraRig {
   punch(p, zoom = 0.6, hold = 1.0, gap = 0) {
     if (this.since < gap) return; // rate-limit automatic punch-ins so rapid breaks don't seasick
     this.since = 0;
-    this.focusGoal.copy(p);
+    this.focusGoal.copy(p).sub(this.panGoal).setY(p.y); // the player's pan is added back on top
     this.zoomGoal = zoom;
     this.rollGoal = PUNCH_DUTCH;
     this.rollV -= 0.9; // kick past the target so the tilt lands with a snap
@@ -133,15 +205,35 @@ export class CameraRig {
     [this.zoom, this.zoomV] = spring(this.zoom, this.zoomV, this.zoomGoal, 70, 13, h);
     [this.roll, this.rollV] = spring(this.roll, this.rollV, this.rollGoal, 90, 12, h);
     this.focus.lerp(this.focusGoal, 1 - Math.exp(-dt * 7));
-    const d = this.baseDist * this.zoom;
-    this.camera.position.copy(this.focus).addScaledVector(DIR, d);
+    // damped player zoom / pan
+    const ez = 1 - Math.exp(-dt * 9);
+    this.manualT += dt;
+    if (this.manualT > 4) {
+      // nobody is steering: glide toward the action (slow, so it never fights a tap)
+      const k = 1 - Math.exp(-dt * 0.8);
+      this.panGoal.x += (this.follow.x - this.panGoal.x) * k;
+      this.panGoal.z += (this.follow.z - this.panGoal.z) * k;
+    }
+    this.user += (this.userGoal - this.user) * ez;
+    this.clampPan(this.panGoal, this.userGoal);
+    this.pan.lerp(this.panGoal, ez);
+    const look = this._look.copy(this.focus).add(this.pan);
+    const d = Math.max(MIN_DIST, this.baseDist * this.zoom * this.user);
+    this.camera.position.copy(look).addScaledVector(DIR, d);
+    if (this.kickT < KICK_T) {
+      this.kickT += dt;
+      const k = Math.min(1, this.kickT / KICK_T);
+      const off = this.kickAmt * (1 - k) * (1 - k);
+      this.camera.position.addScaledVector(this.kickDir, off);
+      look.addScaledVector(this.kickDir, off);
+    }
     if (this.shake > 0) {
       this.shake = Math.max(0, this.shake - dt * 3);
       const s = this.shake * 0.25;
       this.camera.position.x += (Math.random() - 0.5) * s;
       this.camera.position.y += (Math.random() - 0.5) * s;
     }
-    this.camera.lookAt(this.focus);
+    this.camera.lookAt(look);
     this.camera.rotateZ(this.roll);
     // blend toward / away from the establishing shot
     this.time += dt;
@@ -187,11 +279,15 @@ function makeBars(width = 0.7) {
   return { group: g, hp, posture, width };
 }
 
+const KICK = 0.05; // directional camera micro-impulse per landed melee hit (world units)
+
 export class View {
-  constructor(scene, fx, rig, sfx = null) {
+  constructor(scene, fx, rig, sfx = null, text = null) {
     this.scene = scene;
     this.sfx = sfx; // one-shot SFX bus (audio/sfxManager.js); null in tests
-    this.stats = { landings: 0, impacts: 0 };
+    this.text = text; // floating damage numbers / callouts (render/combatText.js); optional
+    this.combat = new CombatEffects();
+    this.stats = { landings: 0, impacts: 0, flashes: 0, hitStops: 0 };
     this.fx = fx;
     this.rig = rig;
     this.units = new Map();
@@ -208,9 +304,8 @@ export class View {
     model.root.position.copy(p);
     model.root.scale.setScalar(model.sprite ? 1 : 0.01); // billboards drop in instead of popping
     this.scene.add(model.root);
-    // range ring (shown when selected)
-    const ring = new THREE.Mesh(new THREE.RingGeometry(u.def.range - 0.04, u.def.range, 64), new THREE.MeshBasicMaterial({ color: new THREE.Color(u.def.accent).multiplyScalar(1.5), transparent: true, opacity: 0, toneMapped: false, depthWrite: false }));
-    ring.rotation.x = -Math.PI / 2;
+    // neon dashed threat ring (fades in while the unit is selected)
+    const ring = threatRing(u.def.range, u.type, u.def.accent);
     ring.position.copy(p).setY(0.25);
     this.scene.add(ring);
     const v = { u, model, ring, spawnT: 0, atkT: 0, atkDir: new THREE.Vector3(0, 0, 1), base: p.clone(), phase: Math.random() * 6 };
@@ -229,6 +324,7 @@ export class View {
     this.scene.remove(v.model.root);
     v.model.dispose?.();
     this.scene.remove(v.ring);
+    v.ring.userData.dispose();
     this.fx.inkBurst(v.base.clone().setY(0.6), 14);
     this.units.delete(u.uid);
   }
@@ -240,7 +336,7 @@ export class View {
     this.scene.add(model.root);
     const bars = makeBars(e.def.boss ? 1.4 : 0.7);
     this.scene.add(bars.group);
-    this.enemies.set(e.uid, { e, model, bars, hitT: 0, maskOff: false, phase: Math.random() * 6, lastWalk: 0 });
+    this.enemies.set(e.uid, { e, model, bars, hitT: 0, maskOff: false, phase: Math.random() * 6, lastWalk: 0, freeze: 0, callT: 0, dying: 0 });
   }
 
   removeEnemy(e, kind = 'kill') {
@@ -248,6 +344,7 @@ export class View {
     if (!v) return;
     const p = v.model.root.position.clone().setY(0.8 * e.def.scale);
     if (kind === 'kill') this.fx.inkBurst(p, e.def.boss ? 80 : 26);
+    this.combat.restore(v.model.root);
     this.scene.remove(v.model.root);
     this.scene.remove(v.bars.group);
     this.enemies.delete(e.uid);
@@ -263,7 +360,15 @@ export class View {
       case 'place': this.addUnit(ev.unit); break;
       case 'sell': this.removeUnit(ev.unit); break;
       case 'spawn': this.addEnemy(ev.enemy); break;
-      case 'kill': this.removeEnemy(ev.enemy, 'kill'); break;
+      case 'kill': {
+        // a billboard's lunge may still be in flight toward it: let the blow land first
+        const v = this.enemies.get(ev.enemy.uid);
+        if (v && this.pendingOn(ev.enemy)) {
+          v.dying = 0.45; // safety net if the attacker is sold mid-swing
+          v.bars.group.visible = false;
+        } else this.removeEnemy(ev.enemy, 'kill');
+        break;
+      }
       case 'leak': this.removeEnemy(ev.enemy, 'leak'); this.rig.shake = Math.max(this.rig.shake, 1); break;
       case 'attack': {
         const v = this.units.get(ev.unit.uid);
@@ -274,12 +379,15 @@ export class View {
         v.atkDir.copy(tp).sub(v.base).setY(0).normalize();
         const hitP = tp.clone().setY(0.9 * ev.enemy.def.scale);
         if (v.model.sprite) {
-          // billboard: lunge first, the hit lands (burst + squash + flash + SFX) at the impact frame
+          // billboard: anticipate + lunge first; the hit lands (burst, flash, numbers, hit-stop, SFX)
+          // when its state machine enters HIT_STOP
+          if (v.pendingHit) this.spriteImpact(v); // a quicker re-attack: land the previous blow now
           const ranged = ev.unit.type === 'oracle';
-          v.model.playAttack(ranged ? 0.12 : 0.35);
-          v.pendingHit = { type: ev.unit.type, hitP, angle: Math.atan2(v.atkDir.z, v.atkDir.x) };
+          v.model.playAttack(ranged ? 0.14 : 0.4);
+          v.pendingHit = { type: ev.unit.type, hitP, angle: Math.atan2(v.atkDir.z, v.atkDir.x), hits: [] };
           break;
         }
+        if (ev.unit.type !== 'oracle') this.rig.kick?.(v.atkDir, KICK);
         v.model.playAttack?.();
         if (ev.unit.type === 'oracle') this.sfx?.magic();
         else this.sfx?.punch();
@@ -297,8 +405,10 @@ export class View {
         break;
       }
       case 'hit': {
-        const v = this.enemies.get(ev.enemy.uid);
-        if (v) v.hitT = 1;
+        // a billboard attacker shows its hits at the impact frame; everything else shows them now
+        const av = ev.unit && this.units.get(ev.unit.uid);
+        if (av?.pendingHit) av.pendingHit.hits.push(ev);
+        else this.showHit(ev);
         break;
       }
       case 'break': {
@@ -346,12 +456,46 @@ export class View {
     this.rig.shake = Math.max(this.rig.shake ?? 0, 0.35);
   }
 
+  /** Is a billboard's blow still travelling toward this enemy? */
+  pendingOn(e) {
+    for (const v of this.units.values()) if (v.pendingHit?.hits.some((h) => h.enemy === e)) return true;
+    return false;
+  }
+
+  /** Damage landed on a Shadow: impact flash, wobble, floating number and WEAK!/CRITICAL! callouts. */
+  showHit(ev, stop = 0) {
+    const v = this.enemies.get(ev.enemy.uid);
+    if (!v) return;
+    v.hitT = 1;
+    this.combat.flash(v.model.root);
+    this.stats.flashes++;
+    if (stop > 0) {
+      v.freeze = Math.max(v.freeze, stop); // the target holds still through the hit-stop too
+      this.stats.hitStops++;
+    }
+    if (!this.text) return;
+    const s = ev.enemy.def.scale;
+    const p = v.model.root.position.clone().setY(RUNWAY_H + 1.7 * s * 0.85 + 0.25);
+    const magic = ev.unit?.type === 'oracle';
+    this.text.damage(p, ev.dmg, magic ? 'magic' : 'physical', { crit: ev.crit || !ev.unit });
+    if ((ev.crit || ev.weak) && v.callT <= 0) {
+      v.callT = 0.6; // one badge per Shadow at a time
+      this.text.callout(p.clone().setY(p.y + 0.35), ev.crit ? 'CRITICAL!' : 'WEAK!');
+    }
+  }
+
   /** The billboard's lunge reached its target: comic burst at the contact point + hit FX + SFX. */
   spriteImpact(v) {
     this.stats.impacts++;
     const h = v.pendingHit;
     v.pendingHit = null;
     if (!h) return;
+    for (const ev of h.hits) this.showHit(ev, ATTACK.HIT_STOP);
+    for (const ev of h.hits) {
+      const ve = this.enemies.get(ev.enemy.uid);
+      if (ve?.dying) this.removeEnemy(ev.enemy, 'kill');
+    }
+    if (h.type !== 'oracle') this.rig.kick?.(v.atkDir, KICK);
     if (h.type === 'oracle') {
       const from = v.model.root.position.clone().setY(v.model.root.position.y + v.model.height * 0.7);
       this.fx.beam(from, h.hitP, 0x39ff88);
@@ -372,6 +516,13 @@ export class View {
     this.sfx?.punch();
   }
 
+  /** Remove every remaining figure (new game). */
+  clear() {
+    for (const v of [...this.units.values()]) this.removeUnit(v.u);
+    for (const v of [...this.enemies.values()]) this.removeEnemy(v.e, 'leak');
+    this.text?.clear();
+  }
+
   /** Turn a 3D figure toward its current target direction smoothly. */
   faceTarget(model, v, dt) {
     const want = Math.atan2(v.atkDir.x, v.atkDir.z);
@@ -382,6 +533,7 @@ export class View {
 
   update(dt, game, camera, selected) {
     this.time += dt;
+    this.text?.update(dt);
     const t = this.time;
     // ---------------- units
     for (const v of this.units.values()) {
@@ -438,7 +590,9 @@ export class View {
         P.rings.forEach((r, i) => { r.rotation.y += dt * (0.8 + i * 0.5) * (baton ? 3 : 1); });
       }
       const sel = selected === u;
-      v.ring.material.opacity += ((sel ? 0.8 : 0) - v.ring.material.opacity) * 0.25;
+      const ro = v.ring.userData.opacity();
+      v.ring.userData.setOpacity(ro + ((sel ? 1 : 0) - ro) * Math.min(1, 0.25 + dt * 8));
+      v.ring.userData.spin(dt);
       if (baton && Math.random() < dt * 20) this.fx.burstSparks(v.base.clone().setY(0.3 + Math.random()), 1, new THREE.Color(0xff6a9a));
     }
     // ---------------- enemies
@@ -446,6 +600,18 @@ export class View {
     for (const v of this.enemies.values()) {
       const { e, model, bars } = v;
       const root = model.root;
+      v.callT -= dt;
+      if (v.dying > 0) {
+        v.dying -= dt;
+        if (v.dying <= 0) {
+          this.removeEnemy(e, 'kill');
+          continue;
+        }
+      }
+      if (v.freeze > 0) {
+        v.freeze -= dt; // hit-stop: hold pose and position on the impact frame
+        continue;
+      }
       root.position.set(e.x - 5, RUNWAY_H, e.y - 5);
       const want = Math.atan2(e.dirX, e.dirY);
       let dy = want - root.rotation.y;

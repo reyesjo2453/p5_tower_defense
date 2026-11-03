@@ -1,6 +1,6 @@
 {
   "name": "encore-protocol",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "description": "Encore Protocol: a stylized 3D isometric tower defense fan showcase in Three.js (original designs, Persona 5-inspired acid-jazz aesthetic).",
   "type": "module",
