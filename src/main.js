@@ -12,6 +12,7 @@ import { silhouetteURL } from './ui/silhouettes.js';
 import { modelURLs, portraitURLs, spriteURLs } from './assets/resolve.js';
 import { loadUnitModels, hasUnitModel } from './render/gltfUnits.js';
 import { loadUnitSprites } from './render/spriteUnits.js';
+import { createAudio } from './audio/index.js';
 
 const params = new URLSearchParams(location.search);
 const coarse = matchMedia('(pointer: coarse)').matches;
@@ -46,7 +47,9 @@ const palace = buildPalace(scene, { quality: quality === 'low' ? 'low' : 'high' 
 const arena = buildArena(scene, game.board, { quality: quality === 'low' ? 'low' : 'high' });
 const post = createPost(renderer, scene, camera, { quality: quality === 'low' ? 'low' : 'high' });
 const fx = new Fx(scene);
-let view = new View(scene, fx, rig);
+// BGM and SFX live on separate buses; the soundtrack starts on the first gesture and never restarts
+const audio = createAudio();
+let view = new View(scene, fx, rig, audio.sfx);
 
 // placement ghost: range ring + glowing plate following the finger
 const ghost = new THREE.Group();
@@ -82,6 +85,7 @@ const state = { speed: 1, paused: false, cine: false, selected: null, card: null
 const hud = new Hud(document.getElementById('ui'), portraits, {
   cardDown(id) {
     if (state.cine) return;
+    audio.sfx.tap();
     state.card = state.card === id && !state.dragging ? null : id;
     state.dragging = !!state.card;
     hud.setSelectedCard(state.card);
@@ -89,6 +93,11 @@ const hud = new Hud(document.getElementById('ui'), portraits, {
     if (state.card) hud.hint(`Drag ${UNITS[id].name} onto a glowing plate (or tap a plate) · ¥${UNITS[id].cost}`);
   },
   action(act) {
+    if (act === 'mute') {
+      audio.toggleMute();
+      return;
+    }
+    audio.sfx.tap();
     if (act === 'pause') togglePause();
     else if (act === 'speed') {
       state.speed = state.speed === 1 ? 2 : 1;
@@ -102,6 +111,9 @@ const hud = new Hud(document.getElementById('ui'), portraits, {
     } else if (act === 'allout') requestAllOut();
   },
 });
+
+hud.setMuted(audio.muted);
+audio.onMute((m) => hud.setMuted(m));
 
 function select(u) {
   state.selected = u;
@@ -143,6 +155,7 @@ function showGhost(tile) {
 function tryPlace(tile) {
   if (!state.card || !tile) return false;
   if (game.place(state.card, tile.x, tile.y)) {
+    audio.sfx.place(); // swoosh during the drop-in, thud as the sprite lands
     hud.deployCutIn(state.card);
     if (game.state === 'ready') hud.hint('Nice. Place a few more, then hit START.');
     state.card = null;
@@ -229,7 +242,7 @@ function newGame() {
   for (const u of [...game.units]) view.removeUnit(u);
   for (const e of [...game.enemies]) view.removeEnemy(e, 'leak');
   game = new Game();
-  view = new View(scene, fx, rig);
+  view = new View(scene, fx, rig, audio.sfx);
   state.speed = 1;
   hud.setSpeed(1);
   togglePause(false);
@@ -371,4 +384,4 @@ resize();
 requestAnimationFrame(loop);
 
 // debug / smoke-test handle
-window.__game = { get game() { return game; }, state, hud, get view() { return view; }, rig, post, fx, scene, palace, assets, assetsReady, newGame, requestAllOut };
+window.__game = { get game() { return game; }, state, hud, audio, get view() { return view; }, rig, post, fx, scene, palace, assets, assetsReady, newGame, requestAllOut };

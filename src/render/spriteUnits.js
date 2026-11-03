@@ -1,5 +1,6 @@
 // 2D billboard units: a standing PNG becomes a camera-facing paper cut-out on its plate, with an
-// ink + paper border, a breathing idle, an attack squash and a soft ground shadow that breathes with it.
+// ink + paper border, a breathing idle, a drop-in deploy, a lunge/impact/recoil attack cycle, a soft
+// ground shadow that breathes with it and a flat ink silhouette shadow on the floor.
 // Card-style art with a black backdrop is keyed first (keyout.js) so only the figure stands up.
 // Used for units that have a sprite (or cut-in) PNG but no .glb; units with neither keep the
 // procedural figure from models.js.
@@ -137,9 +138,16 @@ export function spriteStatus() {
 const _v = new THREE.Vector3();
 const _r = new THREE.Vector3();
 
+// combat cycle timings (seconds): lunge -> impact (squash + flash) -> recoil with a settling bounce
+const DROP = 0.18, DROP_H = 2.0;
+const LUNGE = 0.08, IMPACT = 0.04, RECOIL = 0.12;
+const ease = (k) => 1 - (1 - k) * (1 - k);
+
 /**
- * A fresh billboard for one tower: { root, parts: { body, art, shadow }, height, sprite: true,
- * tick(t, dt, camera, atkDir), playAttack(), dispose() }. view.js calls tick() every frame.
+ * A fresh billboard for one tower: { root, parts: { body, art, shadow, ink }, height, sprite: true,
+ * tick(t, dt, camera, atkDir) -> 'land' | 'impact' | 'land+impact' | null, playAttack(reach), dispose() }.
+ * view.js resets root.position to the plate every frame and then calls tick(), which adds the drop,
+ * lunge and idle on top and reports the landing / impact moments so the view can fire FX and SFX.
  */
 export function instantiateSprite(id) {
   const t = templates.get(id);
@@ -169,6 +177,15 @@ export function instantiateSprite(id) {
   layer(0xffffff, 0.055, -0.01);
   const art = layer(0xffffff, 0, 0);
 
+  // soft ink drop-shadow: the silhouette laid flat on the floor, stretching away from the camera
+  const ink = new THREE.Mesh(PLANE, new THREE.MeshBasicMaterial({
+    color: 0x000000, map: texture, transparent: true, opacity: 0.3, depthWrite: false, side: THREE.DoubleSide,
+  }));
+  ink.rotation.x = -Math.PI / 2;
+  ink.position.y = 0.014;
+  ink.renderOrder = -1;
+  face.add(ink);
+
   const shadow = new THREE.Mesh(DISC, new THREE.MeshBasicMaterial({
     map: shadowTexture(), transparent: true, opacity: 0.5, depthWrite: false, color: 0x000000,
   }));
@@ -178,14 +195,18 @@ export function instantiateSprite(id) {
   shadow.scale.set(shW, 1, shW * 0.55);
   root.add(shadow);
 
-  let kick = 0;
   let mirror = 1;
+  let drop = 0;      // 0..DROP while falling in, then DROP
+  let atk = -1;      // seconds since the current attack started, -1 when idle
+  let reach = tw.lunge ?? 0.35;
   return {
     root,
-    parts: { body, art, shadow },
+    parts: { body, art, shadow, ink },
     height,
     sprite: true,
+    get landed() { return drop >= DROP; },
     tick(time, dt, camera, atkDir) {
+      let event = null;
       // yaw-only billboard toward the camera
       root.getWorldPosition(_v);
       face.rotation.y = Math.atan2(camera.position.x - _v.x, camera.position.z - _v.z) - root.rotation.y;
@@ -195,25 +216,71 @@ export function instantiateSprite(id) {
         const side = Math.sign(_r.dot(atkDir)) || mirror;
         mirror = tw.face === 'left' ? -side : side;
       }
+
+      // deployment drop: fall from DROP_H onto the plate (gravity ease-in), then land
+      let fall = 0;
+      if (drop < DROP) {
+        drop = Math.min(DROP, drop + dt);
+        const k = drop / DROP;
+        fall = DROP_H * (1 - k * k);
+        if (drop >= DROP) event = 'land';
+      }
+
+      // combat cycle: lunge -> impact -> recoil
+      let lunge = 0, sx = 1, sy = 1, lean = 0, flash = 0;
+      if (atk >= 0) {
+        const before = atk;
+        atk += dt;
+        if (before < LUNGE && atk >= LUNGE) event = event ? `${event}+impact` : 'impact'; // even on a long frame
+        if (atk < LUNGE) {
+          const k = ease(atk / LUNGE);
+          lunge = reach * k;
+          sx = 1 - 0.05 * k;
+          sy = 1 + 0.06 * k;
+          lean = 0.14 * k;
+        } else if (atk < LUNGE + IMPACT) {
+          lunge = reach;
+          sx = 1.15;
+          sy = 0.85;
+          lean = 0.08;
+          flash = 1;
+        } else if (atk < LUNGE + IMPACT + RECOIL) {
+          const k = (atk - LUNGE - IMPACT) / RECOIL;
+          lunge = reach * (1 - k) * (1 - k);
+          const settle = Math.sin(k * Math.PI * 2) * (1 - k); // light bounce as it settles
+          sx = 1 + 0.15 * (1 - k) * (1 - k) - settle * 0.04;
+          sy = 1 - 0.15 * (1 - k) * (1 - k) + settle * 0.05;
+          lean = 0.08 * (1 - k);
+        } else {
+          atk = -1;
+        }
+      }
+      if (lunge) root.position.addScaledVector(atkDir, lunge);
+
       // breathing idle: vertical bob + a small scale pulse, shadow shrinks/fades as the body rises
       const s = Math.sin(time * 3.0 + offset);
-      kick = Math.max(0, kick - dt * 5);
-      const k = Math.sin(kick * Math.PI);
-      body.position.y = s * breath;
-      body.scale.set(mirror * (1 + k * 0.1), (1 + s * 0.02) * (1 - k * 0.07), 1);
-      body.rotation.z = -mirror * k * 0.12;
-      const lift = (s + 1) * 0.5; // 0 = low, 1 = high
-      shadow.scale.set(shW * (1.04 - lift * 0.08), 1, shW * 0.55 * (1.04 - lift * 0.08));
+      body.position.y = fall + s * breath;
+      body.scale.set(mirror * sx, (1 + s * 0.02) * sy, 1);
+      body.rotation.z = -mirror * lean;
+      ink.scale.set(mirror * width * sx, height * 0.42, 1);
+      const lift = Math.min(1, (s + 1) * 0.5 + fall); // 0 = low, 1 = high
+      const sh = 1.04 - lift * 0.08 - Math.min(fall, 1) * 0.4;
+      shadow.scale.set(shW * sh, 1, shW * 0.55 * sh);
       shadow.material.opacity = 0.52 - lift * 0.12;
-      art.material.color.setScalar(1 + k * 0.6); // brief hit flash
+      ink.material.opacity = fall > 0 ? 0.3 * Math.max(0, 1 - fall) : 0.3;
+      art.material.color.setScalar(1 + flash * 0.75); // brief hit flash
+      return event;
     },
-    playAttack() {
-      kick = 1;
+    /** Start a lunge -> impact -> recoil cycle; `dist` = how far to dash toward the target. */
+    playAttack(dist) {
+      if (dist != null) reach = dist;
+      atk = 0;
       return true;
     },
     dispose() {
       body.traverse((o) => o.material?.dispose());
       shadow.material.dispose();
+      ink.material.dispose();
     },
   };
 }

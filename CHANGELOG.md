@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.4.0 – Clean billboards, combat cycle, BGM & SFX
+
+- **Deploy cards**: the name, ¥ cost and role badge now sit in the bottom quarter over a dark,
+  angled gradient. The art is anchored at the top, so faces, hair and eyes stay clear.
+- **Cleaner billboards** (`keyout.js`):
+  - border shards, speedlines and floating fragments are dropped;
+  - black coats and hair that touched the backdrop are restored with a morphological closing;
+  - thin streaks attached to the body are severed by a small opening.
+  - The trimmed figure stands with its feet at `y = 0`, over a soft shadow and a flat ink silhouette.
+- **Battlefield states** for billboard units:
+  - a 180 ms drop-in from `y = 2.0` with a dust-ring shockwave on landing;
+  - an 80 ms lunge (~0.35) toward the target, then a 40 ms impact (squash 1.15 × 0.85, flash and
+    a comic slash / POW / tech burst at the contact point), then a 120 ms recoil with a settling bounce.
+- **Background music** (`src/audio/bgmManager.js`):
+  - streams `public/audio/bgm.mp3` when present;
+  - otherwise plays a procedural 124 BPM acid-jazz / Shibuya-funk loop: shuffled hats, snare on 2 and 4,
+    syncopated kick, a walking funk bass with slides, an FM Rhodes with tremolo on
+    Dm9 → G13 → Cmaj7 → A7♯9, brass stabs and vibraphone chimes.
+  - It fades in on the first tap and never restarts on deploys, waves or new games.
+- **Sound effects** (`src/audio/sfxManager.js`) on their own bus: a card-tap blip, a placement
+  swoosh and thud, a melee punch, and a magic / tech sweep.
+- **Mute toggle** in the top-right HUD. The mute state and both volumes persist in `localStorage`.
+
 ## 1.3.1 – Asset aliases & keyed billboards
 
 - **File-name aliases**: each unit also accepts its alias names, with `-` or `_`:

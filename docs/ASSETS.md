@@ -19,6 +19,12 @@ built-in art, so the build never fails because of it.
 > Only use art you have the rights to use (your own work, commissioned work, or CC0 or other
 > licences that allow redistribution). Never add ripped game assets.
 
+## Music
+
+`public/audio/bgm.mp3` (or `.ogg` / `.m4a`, with a git-ignored `audio/custom/` override) is streamed and
+looped when present. Without it, `src/audio/bgmManager.js` plays its own procedural acid-jazz
+groove. Only add music you have the rights to redistribute.
+
 ## Where files go
 
 | Folder | Committed? | Deployed from CI? | Use for |
@@ -79,6 +85,13 @@ A unit with a PNG but no model stands on its plate as a 2D paper cut-out:
    - The near-black backdrop (max RGB below `SPRITE_KEY.threshold`, default 18) is flood-filled
      away from the edges. Black enclosed by the figure is kept.
    - Stray text and stars are dropped, keeping the main figure and any large detached parts.
+     Pieces that touch the outer edge (border shards), long thin streaks (speedlines) and
+     fragments floating away from the body are dropped too.
+   - Black clothing or hair that touched the backdrop is restored: dark pixels inside a
+     morphological closing of the figure come back.
+   - A small morphological opening then severs thin speedlines that touch the body through a
+     narrow neck. Thick comic slashes drawn over the figure stay; only a transparent
+     `<id>-sprite.png` gets rid of those.
    - The HUD cards, unit panel and cut-in overlays still show the full card.
    - Art drawn on anything other than a black backdrop isn't keyed. For a clean figure, add a
      transparent `<id>-sprite.png`. Set `SPRITE_KEY.mode` to `false` to turn keying off.
@@ -89,16 +102,23 @@ A unit with a PNG but no model stands on its plate as a 2D paper cut-out:
    `THREE.Sprite`, whose feet slide off the tile under a tilted camera.
    - It is `SPRITE_HEIGHT` (1.8) tall: the bottom is at `y = 0` and the centre at 0.9.
    - Behind it sit two silhouette layers, a white paper edge and a black ink outline.
-4. **Breathe.** Each frame, with a random phase per tower:
-   - `y = base + sin(t·3 + phase)·0.04`
-   - `scale.y = 1 + sin(t·3 + phase)·0.02`, pivoting at the feet.
-   - A soft ground shadow shrinks and fades as the body rises.
-   - Attacks add a squash, a lean, a brief flash and a lunge toward the target.
+   - On the floor, a soft ground shadow plus the silhouette laid flat in translucent ink.
+4. **Animate.** Each frame, with a random phase per tower:
+   - **Drop-in:** a newly placed unit falls from `y = 2.0` onto the plate over 180 ms, then
+     lands with a dust ring shockwave, an ink puff, a small camera thump and the placement SFX.
+   - **Idle:** `y = base + sin(t·3 + phase)·0.04` and `scale.y = 1 + sin(t·3 + phase)·0.02`,
+     pivoting at the feet. The ground shadow shrinks and fades as the body rises.
+   - **Attack:** lunge ~0.35 toward the target over 80 ms (0.12 for Oracle's ranged shot), then
+     impact for 40 ms: squash to `1.15 × 0.85`, a brightness flash, a comic burst at the contact
+     point and the hit SFX. Then a 120 ms recoil back to the plate with a light settling bounce.
+     The sim applies damage on its own clock; only the visuals wait for the impact frame.
 5. **Tweak.** `SPRITE_TWEAKS` in the manifest:
    - `height`, e.g. `1.1` for a small mascot-sized figure.
    - `breath`: the bob amplitude.
    - `face: 'right' | 'left'`: the way the art faces. When set, the sprite mirrors to face its target.
-   - `key: { mode, threshold }`: per-unit keying override (e.g. a higher threshold for noisy JPEG blacks).
+   - `lunge`: the default dash distance.
+   - `key: { mode, threshold, close, sever }`: per-unit keying override (e.g. a higher threshold
+     for noisy JPEG blacks, a larger `close` for more black clothing, `sever: 0` to keep thin details).
 
 Placing a unit also plays the **deploy cut-in**:
 - A diagonal torn band with sliced borders and speedlines.

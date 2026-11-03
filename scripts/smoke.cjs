@@ -43,7 +43,7 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
     ok((await G(() => window.__game.hud.lastDeploy)) === 'jester', 'deploy cut-in fires on placement');
     if (process.env.SMOKE_SPRITES) {
       // billboard pipeline: cut-in PNG as a camera-facing cut-out, 1.8 tall, feet on the plate, breathing
-      await page.waitForFunction(() => window.__game.view.units.size > 0 && [...window.__game.view.units.values()][0].spawnT >= 1, null, { timeout: T(20000) });
+      await page.waitForFunction(() => window.__game.view.units.size > 0 && [...window.__game.view.units.values()][0].model.landed, null, { timeout: T(20000) });
       const read = () => G(() => {
         const w = window.__game;
         const v = [...w.view.units.values()][0];
@@ -67,6 +67,25 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
       require('node:fs').mkdirSync(path.join(__dirname, '..', 'shots'), { recursive: true });
       await page.screenshot({ path: path.join(__dirname, '..', 'shots', 'sprites-board.png') });
     }
+    // audio: the first gesture started the BGM (procedural unless public/audio/bgm.* exists) and the
+    // card tap + placement played on the separate SFX bus
+    const au = await G(() => window.__game.audio.status());
+    ok(au.bgm.started && ['procedural', 'file'].includes(au.bgm.state), `BGM started on the first gesture (${au.bgm.state}, ctx ${au.bgm.ctx})`);
+    ok(au.sfx.ready && au.sfx.played >= 1, `SFX bus separate and playing (${au.sfx.played} one-shots)`);
+    if (au.bgm.state === 'procedural' && au.bgm.ctx === 'running') {
+      const s0 = au.bgm.step;
+      await page.waitForFunction((s) => window.__game.audio.bgm.step > s + 4, s0, { timeout: T(5000) });
+      ok(true, 'procedural groove keeps scheduling 16ths');
+    }
+    await page.tap('[data-act="mute"]');
+    ok(await G(() => window.__game.audio.muted && document.querySelector('[data-act="mute"]').classList.contains('off') && JSON.parse(localStorage.getItem('encore.audio')).muted === true), 'mute toggle persists to localStorage');
+    await page.tap('[data-act="mute"]');
+    ok(await G(() => !window.__game.audio.muted), 'unmute');
+    // card labels sit in the bottom band so the face stays clear
+    ok(await G(() => [...document.querySelectorAll('.card')].every((c) => {
+      const r = c.getBoundingClientRect(), m = c.querySelector('.meta').getBoundingClientRect();
+      return m.top >= r.top + r.height * 0.6 && m.bottom <= r.bottom + 1;
+    })), 'card name / cost / role anchored in the lower band');
     if (!process.env.SMOKE_SPRITES && !process.env.SMOKE_ASSETS) {
       // whatever art is committed in public/portraits: card-style PNGs must be keyed down to a figure
       await page.waitForFunction(() => window.__game.assets.sprites, null, { timeout: T(20000) });
@@ -74,7 +93,8 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
       for (const k of keyed) ok(k.kept > 0.04 && k.kept < 0.9, `${k.id} billboard keyed out of its card (${k.url.split('/').pop()}, kept ${(k.kept * 100).toFixed(0)}%)`);
       if (keyed.length) {
         require('node:fs').mkdirSync(path.join(__dirname, '..', 'shots'), { recursive: true });
-        await page.waitForFunction(() => [...window.__game.view.units.values()][0]?.spawnT >= 1, null, { timeout: T(20000) });
+        await page.waitForFunction(() => [...window.__game.view.units.values()][0]?.model.landed, null, { timeout: T(20000) });
+        ok(await G(() => window.__game.view.stats.landings >= 1), 'billboard dropped in and landed');
         await page.screenshot({ path: path.join(__dirname, '..', 'shots', 'keyed-board.png') });
       }
     }
@@ -105,6 +125,12 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
     await page.tap('.startbtn');
     await page.waitForFunction(() => window.__game.game.state === 'running' && window.__game.game.enemies.length > 0, null, { timeout: T(10000) }).catch(() => {});
     ok(await G(() => window.__game.game.state === 'running' && window.__game.game.enemies.length > 0), 'wave 1 marches');
+    if (await G(() => [...window.__game.view.units.values()].some((v) => v.model.sprite))) {
+      // swiftshader runs the game far below real time, so feed one attack event instead of waiting
+      await G(() => { const w = window.__game, g = w.game; const u = g.units.find((x) => w.view.unitView(x)?.model.sprite); w.view.onEvent({ t: 'attack', unit: u, enemy: g.enemies[0] }); });
+      await page.waitForFunction(() => window.__game.view.stats.impacts > 0, null, { timeout: T(15000) });
+      ok(true, 'billboard attack cycle reaches its impact frame (lunge -> burst)');
+    }
     await G(() => { const g = window.__game.game; const e = g.enemies[0]; e.posture = 1; g.damage(g.units[0], e, 1, 5); });
     await page.waitForSelector('.onemore', { timeout: T(3000) });
     ok(true, '1-MORE screen-slice plays on posture break');

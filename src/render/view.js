@@ -188,8 +188,10 @@ function makeBars(width = 0.7) {
 }
 
 export class View {
-  constructor(scene, fx, rig) {
+  constructor(scene, fx, rig, sfx = null) {
     this.scene = scene;
+    this.sfx = sfx; // one-shot SFX bus (audio/sfxManager.js); null in tests
+    this.stats = { landings: 0, impacts: 0 };
     this.fx = fx;
     this.rig = rig;
     this.units = new Map();
@@ -204,7 +206,7 @@ export class View {
     model.size = model.gltf || model.sprite ? 1 : 1.3;
     const p = world(u.x, u.y, SLOT_H);
     model.root.position.copy(p);
-    model.root.scale.setScalar(0.01);
+    model.root.scale.setScalar(model.sprite ? 1 : 0.01); // billboards drop in instead of popping
     this.scene.add(model.root);
     // range ring (shown when selected)
     const ring = new THREE.Mesh(new THREE.RingGeometry(u.def.range - 0.04, u.def.range, 64), new THREE.MeshBasicMaterial({ color: new THREE.Color(u.def.accent).multiplyScalar(1.5), transparent: true, opacity: 0, toneMapped: false, depthWrite: false }));
@@ -213,6 +215,10 @@ export class View {
     this.scene.add(ring);
     const v = { u, model, ring, spawnT: 0, atkT: 0, atkDir: new THREE.Vector3(0, 0, 1), base: p.clone(), phase: Math.random() * 6 };
     this.units.set(u.uid, v);
+    if (model.sprite) {
+      v.spawnT = 1; // the sprite's own 180 ms drop replaces the scale pop; landing FX fire in update()
+      return;
+    }
     this.fx.ring(p.clone().setY(0.1), u.type === 'oracle' ? 0x39ff88 : 0xffffff, 2.2, 0.4);
     this.fx.burstSparks(p.clone().setY(0.5), 14);
   }
@@ -264,10 +270,19 @@ export class View {
         const ev2 = this.enemies.get(ev.enemy.uid);
         if (!v || !ev2) break;
         v.atkT = 1;
-        v.model.playAttack?.();
         const tp = ev2.model.root.position.clone();
         v.atkDir.copy(tp).sub(v.base).setY(0).normalize();
         const hitP = tp.clone().setY(0.9 * ev.enemy.def.scale);
+        if (v.model.sprite) {
+          // billboard: lunge first, the hit lands (burst + squash + flash + SFX) at the impact frame
+          const ranged = ev.unit.type === 'oracle';
+          v.model.playAttack(ranged ? 0.12 : 0.35);
+          v.pendingHit = { type: ev.unit.type, hitP, angle: Math.atan2(v.atkDir.z, v.atkDir.x) };
+          break;
+        }
+        v.model.playAttack?.();
+        if (ev.unit.type === 'oracle') this.sfx?.magic();
+        else this.sfx?.punch();
         if (ev.unit.type === 'jester') {
           this.fx.slash(hitP, Math.atan2(v.atkDir.z, v.atkDir.x));
           this.fx.burstSparks(hitP, 5, new THREE.Color(0xffffff));
@@ -321,6 +336,42 @@ export class View {
     return true;
   }
 
+  /** Deployment landing: dust shockwave ring, a puff of ink and a little camera thump. */
+  landSprite(v) {
+    this.stats.landings++;
+    const p = v.base.clone().setY(v.base.y + 0.04);
+    this.fx.dust(p, 2.6, 0.32);
+    this.fx.ring(p, v.u.type === 'oracle' ? 0x39ff88 : 0xffffff, 1.6, 0.25);
+    this.fx.inkBurst(p.clone().setY(p.y + 0.1), 8);
+    this.rig.shake = Math.max(this.rig.shake ?? 0, 0.35);
+  }
+
+  /** The billboard's lunge reached its target: comic burst at the contact point + hit FX + SFX. */
+  spriteImpact(v) {
+    this.stats.impacts++;
+    const h = v.pendingHit;
+    v.pendingHit = null;
+    if (!h) return;
+    if (h.type === 'oracle') {
+      const from = v.model.root.position.clone().setY(v.model.root.position.y + v.model.height * 0.7);
+      this.fx.beam(from, h.hitP, 0x39ff88);
+      this.fx.comicBurst(h.hitP, 'tech', 0.75);
+      this.fx.burstSparks(h.hitP, 4);
+      this.sfx?.magic();
+      return;
+    }
+    if (h.type === 'jester') {
+      this.fx.slash(h.hitP, h.angle);
+      this.fx.comicBurst(h.hitP, 'slash', 0.95);
+      this.fx.burstSparks(h.hitP, 5, new THREE.Color(0xffffff));
+    } else {
+      this.fx.ring(h.hitP, 0xff1a3d, 1.6, 0.25);
+      this.fx.comicBurst(h.hitP, 'punch', 0.9);
+      this.fx.burstSparks(h.hitP, 7);
+    }
+    this.sfx?.punch();
+  }
+
   /** Turn a 3D figure toward its current target direction smoothly. */
   faceTarget(model, v, dt) {
     const want = Math.atan2(v.atkDir.x, v.atkDir.z);
@@ -342,9 +393,12 @@ export class View {
       const swing = Math.sin(v.atkT * Math.PI);
       const baton = u.buffs.some((b) => b.key === 'baton');
       if (model.sprite) {
-        // paper cut-out: billboards itself, breathes, squashes on attack; lunge toward the target
-        model.root.position.copy(v.base).addScaledVector(v.atkDir, swing * (u.type === 'oracle' ? 0.08 : 0.22));
-        model.tick(t, dt * (baton ? 1.5 : 1), camera, v.atkDir);
+        // paper cut-out: billboards itself, drops in, breathes and runs its own lunge -> impact ->
+        // recoil cycle on top of the plate position; we fire the FX/SFX on the moments it reports
+        model.root.position.copy(v.base);
+        const moment = model.tick(t, dt * (baton ? 1.5 : 1), camera, v.atkDir);
+        if (moment?.includes('land')) this.landSprite(v);
+        if (moment?.includes('impact')) this.spriteImpact(v);
       } else {
         this.faceTarget(model, v, dt);
       }

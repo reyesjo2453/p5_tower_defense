@@ -35,6 +35,11 @@ button { font-family: var(--display); cursor: pointer; border: 0; color: inherit
 .tbar i { display: block; height: 100%; background: linear-gradient(90deg, var(--gold), #fff3a0); transition: width .2s; }
 .iconbtn { pointer-events: auto; background: var(--paper); color: var(--ink); font-size: 18px; min-width: 46px; height: 40px; padding: 0 12px; transform: skewX(-12deg); box-shadow: 4px 4px 0 var(--red); }
 .iconbtn > span { display: inline-block; transform: skewX(12deg); }
+.iconbtn.mute svg { display: block; transform: translateY(1px); }
+.iconbtn.mute .x { display: none; }
+.iconbtn.mute.off { background: var(--ink); color: var(--paper); box-shadow: 4px 4px 0 var(--paper); }
+.iconbtn.mute.off .wv { display: none; }
+.iconbtn.mute.off .x { display: inline; }
 .iconbtn:active { transform: skewX(-12deg) translate(2px, 2px); box-shadow: 2px 2px 0 var(--red); }
 
 /* ---------------- deploy cards: -6deg comic skew, jagged white frame, halftone ink face, burst price */
@@ -43,15 +48,15 @@ button { font-family: var(--display); cursor: pointer; border: 0; color: inherit
 .card .frame { position: absolute; inset: 0; background: #fff; }
 .card .face { position: absolute; inset: 4px; overflow: hidden;
   background: radial-gradient(circle, rgba(232,0,45,.42) 28%, transparent 31%) 0 0 / 7px 7px, repeating-linear-gradient(-62deg, transparent 0 10px, rgba(255,255,255,.06) 10px 12px), linear-gradient(160deg, #1b1b22 0%, #050505 60%); }
-.card .face img { position: absolute; left: 50%; bottom: -10px; width: 124%; transform: translateX(-46%) skewX(6deg); filter: drop-shadow(0 0 1px #fff); }
-.card .nm { position: absolute; left: 8px; top: 5px; font-size: 19px; line-height: 1; letter-spacing: 1px; transform: skewX(-8deg); font-style: italic; color: #fff; -webkit-text-stroke: 1px #000; paint-order: stroke fill; text-shadow: 2px 2px 0 var(--red), 3px 3px 0 #000; }
-.card .role { position: absolute; left: 8px; top: 25px; font-family: 'Bebas Neue', Impact, sans-serif; font-size: 13px; color: #050505; background: #fff; padding: 1px 5px 0; letter-spacing: 1.5px; transform: skewX(-12deg) rotate(-3deg); }
-.card .cost { position: absolute; right: -16px; bottom: -16px; width: 58px; height: 58px; transform: rotate(-10deg) skewX(6deg); }
-.card .cost i { position: absolute; inset: 0; }
-.card .cost .bk { background: #050505; transform: translate(3px, 3px) scale(1.08); }
-.card .cost .bg { background: var(--yellow); }
-.card .cost b { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-weight: 400; font-size: 21px; color: #050505; letter-spacing: -.5px; font-style: italic; }
-.card .cost small { font-size: 13px; margin-right: 1px; }
+.card .face img { position: absolute; left: -6%; top: 0; width: 112%; height: 100%; object-fit: cover; object-position: 50% 6%; transform: skewX(6deg); filter: drop-shadow(0 0 1px #fff); }
+/* lower-quarter label band: the face, hair and eyes stay clear above it */
+.card .face .shade { position: absolute; left: 0; right: 0; bottom: 0; height: 46%; background: linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.5) 65%, transparent 100%); clip-path: polygon(0 16%, 100% 0, 100% 100%, 0 100%); }
+.card .meta { position: absolute; left: 7px; right: 6px; bottom: 6px; height: 27%; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; text-align: left; }
+.card .meta .row { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.card .nm { display: block; font-size: 18px; line-height: .95; letter-spacing: 1px; font-style: italic; color: #fff; transform: skewX(-8deg); -webkit-text-stroke: 1px #000; paint-order: stroke fill; text-shadow: 2px 2px 0 var(--red), 3px 3px 0 #000; white-space: nowrap; }
+.card .role { font-family: 'Bebas Neue', Impact, sans-serif; font-size: 11px; line-height: 1; color: #050505; background: #fff; padding: 2px 4px 1px; letter-spacing: 1.2px; transform: skewX(-12deg); box-shadow: 2px 2px 0 #000; white-space: nowrap; }
+.card .cost { font-size: 14px; line-height: 1; color: #050505; background: var(--yellow); padding: 2px 5px 1px; font-style: italic; letter-spacing: -.3px; transform: skewX(-12deg) rotate(-3deg); box-shadow: 2px 2px 0 #000; white-space: nowrap; }
+.card .cost small { font-size: 10px; margin-right: 1px; }
 .card.sel { transform: skewX(-6deg) translateY(-14px) rotate(-2deg); filter: drop-shadow(5px 6px 0 var(--yellow)) drop-shadow(0 0 10px rgba(255,230,0,.6)); }
 .card.sel .frame { background: var(--yellow); }
 .card.poor { filter: grayscale(1) brightness(.55) drop-shadow(5px 6px 0 #333); }
@@ -201,9 +206,9 @@ button { font-family: var(--display); cursor: pointer; border: 0; color: inherit
   .hint { top: calc(54px + var(--safe-t)); font-size: 12px; white-space: normal; text-align: center; width: 92vw; }
   .startbtn { bottom: calc(128px + var(--safe-b)); }
   .card { width: 82px; height: 102px; }
-  .card .nm { font-size: 16px; }
-  .card .cost { width: 50px; height: 50px; right: -12px; bottom: -12px; }
-  .card .cost b { font-size: 18px; }
+  .card .nm { font-size: 15px; }
+  .card .role { font-size: 9.5px; letter-spacing: .8px; padding: 2px 3px 1px; }
+  .card .cost { font-size: 12px; padding: 2px 4px 1px; }
   .onemore { height: 130px; }
   .onemore .badge { font-size: 64px; }
   .onemore .star { width: 140px; top: -40px; left: 40%; }

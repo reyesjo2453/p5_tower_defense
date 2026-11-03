@@ -6,6 +6,7 @@ Encore Protocol · Phantom Showcase: a Persona-inspired 3D tower defense set in 
   - 3D models live in public/models/ (.glb format). Load via GLTFLoader using SkeletonUtils.clone() with Box3 normalization (~1.8 units tall, base grounded at y = 0). Apply toon() and outline() shaders to imported meshes.
   - If a model file is missing or fails to load, gracefully fall back to the procedural primitives in src/render/models.js.
   - 2D cut-in and finisher art checks public/portraits/ (.png) first. If an image is missing, fall back to the vector silhouettes in src/ui/silhouettes.js.
+- Audio: src/audio/ (bgmManager.js = looping soundtrack, public/audio/bgm.mp3 or procedural; sfxManager.js = one-shots). Separate gain buses; started on the first gesture; window.__game.audio.
 - 2D comic FX and frames live in src/ui/comic.js (stars, ink, speedlines, torn paper).
 - The Palace backdrop is src/render/palace.js; keep it instanced/merged (mobile draw-call budget).
 - All meshes use toon() from src/render/toon.js (cel ramp + hard spec + rim) and outline() for ink lines; glowing parts use glowMat() (unlit, toneMapped false) so only they bloom.

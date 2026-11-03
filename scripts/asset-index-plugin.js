@@ -6,8 +6,8 @@ import path from 'node:path';
 
 const ID = 'virtual:asset-index';
 const RID = '\0' + ID;
-const ROOTS = ['models', 'portraits'];
-const EXT = /\.(glb|gltf|png|webp|jpe?g|avif)$/i;
+const ROOTS = ['models', 'portraits', 'audio'];
+const EXT = /\.(glb|gltf|png|webp|jpe?g|avif|mp3|ogg|m4a)$/i;
 
 function scan(publicDir) {
   const out = [];
