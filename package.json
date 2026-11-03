@@ -1,0 +1,27 @@
+{
+  "name": "encore-protocol",
+  "version": "1.2.0",
+  "private": true,
+  "description": "Encore Protocol: a stylized 3D isometric tower defense fan showcase in Three.js (original designs, Persona 5-inspired acid-jazz aesthetic).",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "preview": "vite preview --host",
+    "test": "node --test tests/*.test.js",
+    "smoke": "node scripts/smoke.cjs",
+    "smoke:assets": "node scripts/smoke-assets.cjs",
+    "assets:placeholder": "node scripts/placeholder-assets.cjs install",
+    "assets:clean": "node scripts/placeholder-assets.cjs clean"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "three": "^0.180.0"
+  },
+  "devDependencies": {
+    "vite": "^7.3.7"
+  }
+}

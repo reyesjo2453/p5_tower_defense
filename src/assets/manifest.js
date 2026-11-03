@@ -1,0 +1,35 @@
+// Drop-in art manifest. Every unit archetype maps to a glTF model plus its 2D cut-in art.
+// Paths are relative to public/models and public/portraits. Each file is looked up in
+// `custom/` first, then the base folder; anything missing falls back to the built-in procedural
+// figure (src/render/models.js) or the SVG silhouette (src/ui/silhouettes.js), so the build
+// never depends on these files existing. See docs/ASSETS.md.
+export const UNIT_ART = {
+  jester: {
+    archetype: 'Leader',
+    model: 'jester.glb',
+    card: 'jester-card.png',     // deploy-card face
+    cutin: 'jester-cutin.png',   // 1-MORE band + All-Out panel
+  },
+  queen: {
+    archetype: 'Vanguard',
+    model: 'queen.glb',
+    card: 'queen-card.png',
+    cutin: 'queen-cutin.png',
+  },
+  oracle: {
+    archetype: 'Tactician',
+    model: 'oracle.glb',
+    card: 'oracle-card.png',
+    cutin: 'oracle-cutin.png',
+  },
+};
+
+// "THE SHOW'S OVER" finisher splash hero.
+export const FINISHER_ART = 'finisher.png';
+
+// Normalized standing height (world units) for imported models, feet at y = 0.
+export const MODEL_HEIGHT = 1.8;
+
+// Optional per-model tweaks, keyed by unit id: { yaw (radians, if the model doesn't face +Z),
+// height (overrides MODEL_HEIGHT), idle / attack (animation clip name, regex source) }.
+export const MODEL_TWEAKS = {};
