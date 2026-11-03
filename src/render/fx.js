@@ -141,6 +141,28 @@ export class Fx {
     this.scene.add(m);
   }
 
+  /** Flat dust shockwave on the floor (deployment landing). */
+  dust(p, maxScale = 2.6, life = 0.32) {
+    const m = new THREE.Mesh(this.ringGeo, new THREE.MeshBasicMaterial({ color: 0xe9e1d2, transparent: true, opacity: 0.85, depthWrite: false }));
+    m.position.copy(p);
+    m.rotation.x = Math.PI / 2;
+    this.transient.push({ mesh: m, age: 0, life, kind: 'dust', maxScale });
+    this.scene.add(m);
+  }
+
+  /**
+   * 2D comic impact burst at the point of contact: a camera-facing ink starburst ('punch' = yellow
+   * POW star, 'slash' = white diagonal slash cut, 'tech' = green glitch star). Pops then fades.
+   */
+  comicBurst(p, kind = 'punch', size = 0.9) {
+    const m = new THREE.Sprite(new THREE.SpriteMaterial({ map: burstTexture(kind), transparent: true, depthTest: false, depthWrite: false }));
+    m.position.copy(p);
+    m.material.rotation = (Math.random() - 0.5) * 0.9;
+    m.renderOrder = 10;
+    this.transient.push({ mesh: m, age: 0, life: 0.24, kind: 'burst', size });
+    this.scene.add(m);
+  }
+
   // ---------------------------------------------------------------- update
   update(dt) {
     const g = 9;
@@ -192,7 +214,7 @@ export class Fx {
       const k = tr.age / tr.life;
       if (k >= 1) {
         this.scene.remove(tr.mesh);
-        tr.mesh.material.dispose();
+        tr.mesh.material.dispose(); // burst textures are shared and cached, only the material goes
         return false;
       }
       if (tr.kind === 'slash') {
@@ -201,6 +223,13 @@ export class Fx {
       } else if (tr.kind === 'ring') {
         tr.mesh.scale.setScalar(0.3 + k * tr.maxScale);
         tr.mesh.material.opacity = 1 - k;
+      } else if (tr.kind === 'dust') {
+        tr.mesh.scale.set(0.3 + k * tr.maxScale, 0.3 + k * tr.maxScale, 1 + (1 - k) * 3);
+        tr.mesh.material.opacity = 0.85 * (1 - k) * (1 - k);
+      } else if (tr.kind === 'burst') {
+        const pop = k < 0.3 ? 0.45 + (k / 0.3) * 0.75 : 1.2 - (k - 0.3) * 0.25;
+        tr.mesh.scale.setScalar(tr.size * pop);
+        tr.mesh.material.opacity = k < 0.55 ? 1 : 1 - (k - 0.55) / 0.45;
       } else if (tr.kind === 'beam') {
         tr.mesh.material.opacity = 1 - k;
         tr.mesh.scale.x = tr.mesh.scale.y = 1 + k * 2;
@@ -208,4 +237,47 @@ export class Fx {
       return true;
     });
   }
+}
+
+// cached canvas textures for comicBurst()
+const bursts = {};
+function burstTexture(kind) {
+  if (bursts[kind]) return bursts[kind];
+  const S = 256, c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d');
+  const star = (n, r0, r1, rot, fill, stroke, lw) => {
+    g.beginPath();
+    for (let i = 0; i < n * 2; i++) {
+      const a = rot + (i / (n * 2)) * Math.PI * 2;
+      const r = i % 2 ? r0 : r1 * (0.82 + ((i * 37) % 7) / 30);
+      g.lineTo(S / 2 + Math.cos(a) * r, S / 2 + Math.sin(a) * r);
+    }
+    g.closePath();
+    g.fillStyle = fill;
+    g.fill();
+    if (stroke) { g.lineWidth = lw; g.strokeStyle = stroke; g.stroke(); }
+  };
+  g.lineJoin = 'miter';
+  if (kind === 'slash') {
+    star(9, 40, 92, 0.2, '#e8002d', '#050505', 8);
+    g.save();
+    g.translate(S / 2, S / 2);
+    g.rotate(-0.7);
+    for (const [w, col] of [[30, '#050505'], [18, '#ffffff']]) {
+      g.beginPath();
+      g.moveTo(-118, 0); g.lineTo(0, -w / 2); g.lineTo(118, 0); g.lineTo(0, w / 2); g.closePath();
+      g.fillStyle = col;
+      g.fill();
+    }
+    g.restore();
+  } else {
+    const tech = kind === 'tech';
+    star(12, 52, 118, 0, '#050505');
+    star(12, 46, 104, 0, tech ? '#39ff88' : '#ffe600', '#050505', 6);
+    star(8, 22, 48, 0.3, '#ffffff');
+  }
+  bursts[kind] = new THREE.CanvasTexture(c);
+  bursts[kind].colorSpace = THREE.SRGBColorSpace;
+  return bursts[kind];
 }

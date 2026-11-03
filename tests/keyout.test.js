@@ -52,3 +52,24 @@ test('an image with no dark backdrop is left untouched', () => {
   assert.equal(d.filter((v, i) => i % 4 === 3 && v === 0).length, 0);
   assert.deepEqual(d.slice(0, 40), before.slice(0, 40));
 });
+
+test('keyOut isolates the figure from speedlines, edge shards and floating fragments', () => {
+  const w = 200, h = 260, d = new Uint8ClampedArray(w * h * 4);
+  const fill = (x0, y0, x1, y1, r, g, b) => {
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) d.set([r, g, b, 255], (y * w + x) * 4);
+  };
+  fill(0, 0, w, h, 4, 4, 6);                  // black backdrop
+  fill(70, 60, 130, 210, 170, 150, 140);      // body
+  fill(130, 100, 178, 103, 255, 255, 255);    // speedline (3px) attached to the body
+  fill(60, 240, 140, 260, 230, 20, 30);       // border shard touching the bottom edge
+  fill(162, 10, 192, 40, 255, 230, 0);        // floating fragment, big but far from the body
+  fill(140, 150, 170, 180, 170, 150, 140);    // detached hand next to the body
+  const r = keyOut(d, w, h);
+  const a = (x, y) => d[(y * w + x) * 4 + 3];
+  assert.equal(r.keyed, true);
+  assert.equal(a(100, 120), 255, 'body');
+  assert.equal(a(155, 165), 255, 'detached hand kept');
+  assert.equal(a(165, 101), 0, 'speedline severed');
+  assert.equal(a(100, 250), 0, 'edge shard dropped');
+  assert.equal(a(175, 25), 0, 'floating fragment dropped');
+});

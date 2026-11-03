@@ -9,3 +9,4 @@ public/models/custom/*
 public/portraits/custom/*
 !public/models/custom/.gitkeep
 !public/portraits/custom/.gitkeep
+public/audio/custom/*

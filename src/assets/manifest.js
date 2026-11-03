@@ -57,5 +57,5 @@ export const SPRITE_KEY = { mode: 'auto', threshold: 18 };
 
 // Optional per-sprite tweaks, keyed by unit id: { height (e.g. 1.1 for a small mascot-sized
 // figure), face ('right' | 'left': mirror toward the target), breath (bob amplitude, default
-// 0.04), key ({ mode, threshold } overriding SPRITE_KEY) }.
+// 0.04), lunge (attack dash, default 0.35), key ({ mode, threshold, close, sever } overriding SPRITE_KEY) }.
 export const SPRITE_TWEAKS = {};

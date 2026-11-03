@@ -13,6 +13,8 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // jagged comic-card outline shared by the deploy cards (white frame + inset ink face)
 const JAG = 'polygon(0% 4%, 9% 0%, 21% 3%, 37% 0%, 55% 3%, 71% 0%, 88% 2%, 100% 0%, 97% 18%, 100% 37%, 96% 58%, 100% 79%, 98% 100%, 83% 96%, 66% 100%, 47% 97%, 30% 100%, 13% 96%, 0% 100%, 3% 80%, 0% 60%, 4% 39%, 0% 20%)';
 const BURST = burstClip(12, 0.64, 9);
+// speaker glyph for the mute toggle (the waves hide and a slash shows when muted, via CSS)
+const SPEAKER = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 9h4l5-4v14l-5-4H3z" fill="currentColor"/><path class="wv" d="M15.5 8.5a5 5 0 0 1 0 7M18 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path class="x" d="M15 9l6 6M21 9l-6 6" stroke="#e8002d" stroke-width="2.8" stroke-linecap="round"/></svg>';
 // one-time generated comic textures
 const TEX = {
   speedOne: speedlinesURL({ w: 900, h: 220, fx: 0.24, fy: 0.55, n: 90, seed: 11 }),
@@ -50,6 +52,7 @@ export class Hud {
         <div class="chip cash"><span><i class="yen" style="clip-path:${BURST}">¥</i><b data-k="cash">0</b></span></div>
         <button class="iconbtn live" data-act="speed"><span>1×</span></button>
         <button class="iconbtn live" data-act="pause"><span>❚❚</span></button>
+        <button class="iconbtn live mute" data-act="mute" aria-label="Mute audio" aria-pressed="false"><span>${SPEAKER}</span></button>
       </div>
     </div>`);
     r.appendChild(this.top);
@@ -57,9 +60,8 @@ export class Hud {
     for (const def of Object.values(UNITS)) {
       const c = $(`<button class="card accent-${def.id}" data-unit="${def.id}">
         <span class="frame" style="clip-path:${JAG}"></span>
-        <span class="face" style="clip-path:${JAG}">${this.portraits.card[def.id] ? `<img alt="" src="${this.portraits.card[def.id]}">` : ''}</span>
-        <span class="nm">${def.name.toUpperCase()}</span><span class="role">${def.role.toUpperCase()}</span>
-        <span class="cost"><i class="bk" style="clip-path:${BURST}"></i><i class="bg" style="clip-path:${BURST}"></i><b><small>¥</small>${def.cost}</b></span>
+        <span class="face" style="clip-path:${JAG}">${this.portraits.card[def.id] ? `<img alt="" src="${this.portraits.card[def.id]}">` : ''}<i class="shade"></i></span>
+        <span class="meta"><span class="row"><span class="role">${def.role.toUpperCase()}</span><span class="cost"><small>¥</small>${def.cost}</span></span><span class="nm">${def.name.toUpperCase()}</span></span>
       </button>`);
       c.addEventListener('pointerdown', (e) => {
         e.preventDefault();
@@ -114,6 +116,14 @@ export class Hud {
 
   setSpeed(s) {
     this.top.querySelector('[data-act="speed"] span').textContent = `${s}×`;
+  }
+
+  /** Reflect the audio mute state on the top-right toggle. */
+  setMuted(m) {
+    const b = this.top.querySelector('[data-act="mute"]');
+    b.classList.toggle('off', m);
+    b.setAttribute('aria-pressed', String(m));
+    b.setAttribute('aria-label', m ? 'Unmute audio' : 'Mute audio');
   }
 
   setPaused(p) {
