@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-/* End-to-end check of the drop-in art pipeline: install the CC0 placeholders into the custom/ folders,
- * build, run the browser smoke test with glTF/PNG assertions on, then remove them and rebuild clean. */
+/* End-to-end check of the drop-in art pipeline with the CC0 placeholders in the custom/ folders:
+ *   1. models + portraits -> glTF figures (SMOKE_ASSETS)
+ *   2. portraits only     -> 2D billboard sprites from the cut-in PNGs (SMOKE_SPRITES)
+ * then remove them and rebuild clean. */
 const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 
@@ -12,6 +14,10 @@ try {
   run('scripts/placeholder-assets.cjs', ['install']);
   run(vite, ['build', '--logLevel', 'warn']);
   run('scripts/smoke.cjs', [], { SMOKE_ASSETS: '1' });
+  run('scripts/placeholder-assets.cjs', ['clean']);
+  run('scripts/placeholder-assets.cjs', ['install', 'sprites']);
+  run(vite, ['build', '--logLevel', 'warn']);
+  run('scripts/smoke.cjs', [], { SMOKE_SPRITES: '1' });
 } catch {
   failed = true;
 } finally {

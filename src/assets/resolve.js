@@ -1,6 +1,6 @@
 // Resolves the custom/ -> base -> built-in fallback chain against the build-time asset index.
 import { files } from 'virtual:asset-index';
-import { UNIT_ART, FINISHER_ART } from './manifest.js';
+import { UNIT_ART, FINISHER_ART, SPRITE_FROM_CUTIN } from './manifest.js';
 
 const have = new Set(files);
 const BASE = import.meta.env.BASE_URL;
@@ -15,6 +15,14 @@ export function resolveAsset(kind, file) {
 /** { jester: url|null, ... } for the glTF models. */
 export function modelURLs() {
   return Object.fromEntries(Object.entries(UNIT_ART).map(([id, a]) => [id, resolveAsset('models', a.model)]));
+}
+
+/** { jester: url|null, ... } for standing billboards: the sprite PNG, else (optionally) the cut-in PNG. */
+export function spriteURLs() {
+  return Object.fromEntries(Object.entries(UNIT_ART).map(([id, a]) => [
+    id,
+    resolveAsset('portraits', a.sprite) ?? (SPRITE_FROM_CUTIN ? resolveAsset('portraits', a.cutin) : null),
+  ]));
 }
 
 /**

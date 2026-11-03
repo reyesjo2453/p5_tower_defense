@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { BUILDERS, buildShadow } from './models.js';
 import { instantiateUnit } from './gltfUnits.js';
+import { instantiateSprite } from './spriteUnits.js';
 import { world, RUNWAY_H, SLOT_H } from './arena.js';
 
 const DUTCH = THREE.MathUtils.degToRad(-6); // resting Dutch roll
@@ -197,9 +198,10 @@ export class View {
   }
 
   addUnit(u) {
-    // imported glTF figure when one loaded (already normalized to MODEL_HEIGHT), else procedural
-    const model = instantiateUnit(u.type) ?? BUILDERS[u.type]();
-    model.size = model.gltf ? 1 : 1.3;
+    // imported glTF figure (normalized to MODEL_HEIGHT), else a 2D billboard from a sprite/cut-in PNG,
+    // else the procedural figure
+    const model = instantiateUnit(u.type) ?? instantiateSprite(u.type) ?? BUILDERS[u.type]();
+    model.size = model.gltf || model.sprite ? 1 : 1.3;
     const p = world(u.x, u.y, SLOT_H);
     model.root.position.copy(p);
     model.root.scale.setScalar(0.01);
@@ -219,6 +221,7 @@ export class View {
     const v = this.units.get(u.uid);
     if (!v) return;
     this.scene.remove(v.model.root);
+    v.model.dispose?.();
     this.scene.remove(v.ring);
     this.fx.inkBurst(v.base.clone().setY(0.6), 14);
     this.units.delete(u.uid);
@@ -272,7 +275,7 @@ export class View {
           this.fx.ring(hitP, 0xff1a3d, 1.6, 0.25);
           this.fx.burstSparks(hitP, 7);
         } else {
-          const from = v.model.gltf ? v.model.root.position.clone().setY(v.model.root.position.y + v.model.height * 0.7) : v.model.parts.body.getWorldPosition(new THREE.Vector3());
+          const from = v.model.gltf || v.model.sprite ? v.model.root.position.clone().setY(v.model.root.position.y + v.model.height * 0.7) : v.model.parts.body.getWorldPosition(new THREE.Vector3());
           this.fx.beam(from, hitP, 0x39ff88);
           this.fx.burstSparks(hitP, 4);
         }
@@ -318,6 +321,14 @@ export class View {
     return true;
   }
 
+  /** Turn a 3D figure toward its current target direction smoothly. */
+  faceTarget(model, v, dt) {
+    const want = Math.atan2(v.atkDir.x, v.atkDir.z);
+    let dy = want - model.root.rotation.y;
+    dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+    model.root.rotation.y += dy * Math.min(1, dt * 10);
+  }
+
   update(dt, game, camera, selected) {
     this.time += dt;
     const t = this.time;
@@ -330,13 +341,17 @@ export class View {
       v.atkT = Math.max(0, v.atkT - dt * 4);
       const swing = Math.sin(v.atkT * Math.PI);
       const baton = u.buffs.some((b) => b.key === 'baton');
-      // face the current target direction smoothly
-      const want = Math.atan2(v.atkDir.x, v.atkDir.z);
-      let dy = want - model.root.rotation.y;
-      dy = Math.atan2(Math.sin(dy), Math.cos(dy));
-      model.root.rotation.y += dy * Math.min(1, dt * 10);
+      if (model.sprite) {
+        // paper cut-out: billboards itself, breathes, squashes on attack; lunge toward the target
+        model.root.position.copy(v.base).addScaledVector(v.atkDir, swing * (u.type === 'oracle' ? 0.08 : 0.22));
+        model.tick(t, dt * (baton ? 1.5 : 1), camera, v.atkDir);
+      } else {
+        this.faceTarget(model, v, dt);
+      }
       const P = model.parts;
-      if (model.gltf) {
+      if (model.sprite) {
+        // posed by tick() above
+      } else if (model.gltf) {
         // imported figure: its own clips drive the pose; add a short lunge toward the target
         model.mixer?.update(dt * (baton ? 1.5 : 1));
         model.root.position.copy(v.base).addScaledVector(v.atkDir, swing * (u.type === 'oracle' ? 0.08 : 0.25));

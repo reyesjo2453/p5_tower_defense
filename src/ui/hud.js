@@ -16,6 +16,8 @@ const BURST = burstClip(12, 0.64, 9);
 // one-time generated comic textures
 const TEX = {
   speedOne: speedlinesURL({ w: 900, h: 220, fx: 0.24, fy: 0.55, n: 90, seed: 11 }),
+  speedDeploy: speedlinesURL({ w: 900, h: 200, fx: 0.18, fy: 0.5, n: 80, accent: '#ffe600', seed: 14 }),
+  tornDeploy: tornClip(21, 6, 30),
   speedPanel: speedlinesURL({ w: 300, h: 700, fx: 0.5, fy: 0.42, n: 64, ink: '#050505', accent: '#fff', seed: 12, inner: 0.12 }),
   speedPanelK: speedlinesURL({ w: 300, h: 700, fx: 0.5, fy: 0.42, n: 64, ink: '#e8002d', accent: '#fff', seed: 13, inner: 0.12 }),
   speedSplash: speedlinesURL({ w: 1000, h: 700, fx: 0.3, fy: 0.55, n: 120, ink: '#050505', accent: '#fff', seed: 14, inner: 0.1 }),
@@ -66,7 +68,7 @@ export class Hud {
       this.deck.appendChild(c);
     }
     r.appendChild(this.deck);
-    this.panel = $(`<div class="unitpanel"><h3 data-k="pname">UNIT</h3><p data-k="pdesc"></p>
+    this.panel = $(`<div class="unitpanel"><img class="pv" alt="" data-k="pimg"><h3 data-k="pname">UNIT</h3><p data-k="pdesc"></p>
       <button class="live baton" data-act="baton">BATON PASS ▶</button><button class="live" data-act="sell">SELL</button><button class="live" data-act="close">✕</button></div>`);
     r.appendChild(this.panel);
     this.hintEl = $('<div class="hint" style="display:none"></div>');
@@ -93,6 +95,10 @@ export class Hud {
       return;
     }
     this.q('pname').textContent = `${u.def.name} · ${u.def.role.toUpperCase()}`;
+    const pv = this.q('pimg');
+    const src = this.portraits.card[u.type] || '';
+    if (pv.getAttribute('src') !== src) pv.setAttribute('src', src);
+    pv.style.display = src ? '' : 'none';
     this.q('pdesc').textContent = u.def.blurb;
     this.panel.querySelector('[data-act="baton"]').style.display = canBaton ? '' : 'none';
     this.panel.querySelector('[data-act="sell"]').textContent = `SELL +${Math.floor(u.def.cost / 2)}`;
@@ -144,6 +150,54 @@ export class Hud {
     });
     this.root.appendChild(b);
     return b;
+  }
+
+  // ---------------------------------------------------------------- deploy cut-in
+  /**
+   * Fire-and-forget deploy flourish: a diagonal torn band with sliced borders and speedlines, the
+   * unit's cut-in art, red/green/yellow confetti and a 150 ms impact shake. Never blocks input;
+   * a new deploy replaces one still playing.
+   */
+  deployCutIn(unitId) {
+    const def = UNITS[unitId];
+    if (!def) return;
+    this.root.querySelector('.deploy')?.remove();
+    this.lastDeploy = unitId;
+    const R = rng(Date.now() & 0xffff);
+    const colors = ['#e8002d', '#39ff88', '#ffe600'];
+    let bits = '';
+    for (let i = 0; i < 26; i++) {
+      const a = (R() - 0.5) * Math.PI * 1.3 - 0.35; // mostly fanning right/up along the band
+      const d = 120 + R() * 260;
+      const shape = i % 3 === 0 ? 'star' : i % 3 === 1 ? 'dia' : 'chip';
+      bits += `<i class="bit ${shape}" style="--c:${colors[i % 3]};--dx:${Math.cos(a) * d}px;--dy:${Math.sin(a) * d * 0.7}px;--r:${(R() * 720 - 360) | 0}deg;--s:${(0.6 + R() * 0.9).toFixed(2)};animation-delay:${(60 + R() * 90) | 0}ms"></i>`;
+    }
+    const art = this.portraits.cutin[unitId];
+    const el = $(`<div class="deploy accent-${def.id}" data-unit="${def.id}">
+      <div class="slices"><i class="s1"></i><i class="s2"></i><i class="s3"></i></div>
+      <div class="band" style="clip-path:${TEX.tornDeploy}">
+        <div class="lines" style="background-image:url(&quot;${TEX.speedDeploy}&quot;)"></div>
+      </div>
+      ${art ? `<img class="art" alt="" src="${art}">` : ''}
+      <div class="txt"><b>${def.name.toUpperCase()}</b><small>${def.role.toUpperCase()} · DEPLOYED!</small></div>
+      <div class="bits">${bits}</div>
+    </div>`);
+    this.root.appendChild(el);
+    this.impact(150);
+    setTimeout(() => el.classList.add('out'), 620);
+    setTimeout(() => el.remove(), 900);
+  }
+
+  /** Short screen bounce on the whole stage (skipped for reduced motion). */
+  impact(ms = 150) {
+    const stage = this.root.parentElement;
+    if (!stage || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    stage.classList.remove('impact');
+    void stage.offsetWidth; // restart the animation
+    stage.style.setProperty('--impact-ms', `${ms}ms`);
+    stage.classList.add('impact');
+    clearTimeout(this.impactT);
+    this.impactT = setTimeout(() => stage.classList.remove('impact'), ms + 20);
   }
 
   // ---------------------------------------------------------------- 1-MORE screen-slice
