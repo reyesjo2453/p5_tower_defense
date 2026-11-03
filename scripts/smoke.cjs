@@ -25,7 +25,8 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
   page.on('console', (m) => m.type() === 'error' && !/fonts\.g|net::ERR/.test(m.text()) && errors.push(`console: ${m.text()}`));
   const G = (fn) => page.evaluate(fn);
   try {
-    await page.goto(`http://localhost:${port}/`);
+    // the mechanics walk-through runs in the sandbox (whole cast, auto waves); the story is checked below
+    await page.goto(`http://localhost:${port}/?unlock=all`);
     await page.waitForSelector('.overlay .startbtn', { timeout: T(20000) });
     ok(true, 'title renders');
     await page.tap('.overlay .startbtn');
@@ -67,7 +68,7 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
       });
       await G(() => window.__game.view.units.values().next().value.model.parts.art.geometry.computeBoundingBox());
       const a = await read();
-      ok(a.models === 0 && a.loaded === 'jester,oracle,queen', `sprites loaded for units without a .glb (${a.loaded})`);
+      ok(a.models === 0 && /jester,.*oracle,.*queen/.test(a.loaded), `sprites loaded for units without a .glb (${a.loaded})`);
       ok(a.sprite && /custom\/jester-cutin\.png$/.test(a.tex), 'placed unit is a billboard of its cut-in PNG');
       ok(Math.abs(a.h - 1.8) < 0.12, `billboard height ~1.8 (got ${a.h.toFixed(3)})`);
       ok(Math.abs(a.minY - a.base) < 0.07, `feet on the plate (minY ${a.minY.toFixed(3)} vs plate ${a.base.toFixed(3)})`);
@@ -123,14 +124,14 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
           const b = o.boundingBox.clone().applyMatrix4(o.matrixWorld);
           minY = Math.min(minY, b.min.y); maxY = Math.max(maxY, b.max.y);
         });
-        return { gltf: !!v.model.gltf, mixer: !!v.model.mixer, minY, h: (maxY - minY) / v.model.root.scale.y, base: v.base.y, loaded: w.assets.models.loaded.map((l) => l.id).sort().join(), png: w.assets.portraits.length };
+        return { gltf: !!v.model.gltf, mixer: !!v.model.mixer, minY, h: (maxY - minY) / v.model.root.scale.y, base: v.base.y, loaded: w.assets.models.loaded.map((l) => l.id).sort().join(), png: w.assets.portraits.filter((k) => /:(jester|queen|oracle)$|^finisher$/.test(k)).length };
       });
       ok(m.loaded === 'jester,oracle,queen', `glTF models loaded (${m.loaded})`);
       ok(m.gltf && m.mixer, 'placed unit is a SkeletonUtils clone with an animation mixer');
       ok(Math.abs(m.h - 1.8) < 0.12, `Box3-normalized height ~1.8 (got ${m.h.toFixed(3)})`);
       ok(Math.abs(m.minY - m.base) < 0.08, `feet grounded on the plate (minY ${m.minY.toFixed(3)} vs plate ${m.base.toFixed(3)})`);
-      ok(m.png === 7, `all 7 portrait PNGs resolved from custom/ (${m.png})`);
-      ok(await G(() => [...document.querySelectorAll('.card .face img')].every((i) => /custom\/\w+-card\.png$/.test(i.src))), 'deploy cards show the card PNGs');
+      ok(m.png === 7, `all 7 placeholder portrait PNGs resolved from custom/ (${m.png})`);
+      ok(await G(() => ['jester', 'queen', 'oracle'].every((id) => /custom\/\w+-card\.png$/.test(document.querySelector(`.card[data-unit="${id}"] .face img`).src))), 'deploy cards show the card PNGs');
     }
     await G(() => { const g = window.__game.game; g.cash = 999; g.place('queen', 7, 6); g.place('oracle', 8, 4); });
     await page.tap('.startbtn');
@@ -183,6 +184,36 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
     }
     await page.waitForFunction(() => !window.__game.state.cine, null, { timeout: T(30000) });
     ok(await G(() => window.__game.game.downed.length === 0), 'downed Shadows were finished');
+    // ---------------- campaign: story scene -> tutorial -> chapter unlocks
+    await page.close(); // swiftshader can't drive two WebGL pages at once
+    const sp = await browser.newPage({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true });
+    sp.setDefaultTimeout(T(30000));
+    sp.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+    await sp.goto(`http://localhost:${port}/?fresh`, { waitUntil: 'domcontentloaded' });
+    await sp.evaluate(() => localStorage.removeItem('encore.save'));
+    await sp.reload({ waitUntil: 'domcontentloaded' });
+    await sp.waitForSelector('.overlay .startbtn', { timeout: T(20000) });
+    await sp.tap('.overlay .startbtn');
+    await sp.waitForSelector('.story .st-title', { timeout: T(20000) });
+    ok(true, 'prologue scene opens with a title card');
+    for (let i = 0; i < 3; i++) await sp.tap('.story');
+    ok(await sp.evaluate(() => !!document.querySelector('.story .st-cap, .story .st-panel')), 'tapping advances through narration / speech panels');
+    await sp.tap('.story .st-skip');
+    await sp.waitForSelector('.coach:not([style*="none"])', { timeout: T(5000) });
+    const c0 = await sp.evaluate(() => ({ text: document.querySelector('.coach p').textContent, cards: [...document.querySelectorAll('.card:not(.locked)')].map((c) => c.dataset.unit).join(), focus: !!document.querySelector('.card.tut-focus') }));
+    ok(/JESTER/.test(c0.text) && c0.cards === 'jester' && c0.focus, `prologue lesson spotlights the only card on stage (${c0.cards})`);
+    await sp.evaluate(() => window.__game.game.place('jester', 6, 3));
+    await sp.waitForFunction(() => /curtain/i.test(document.querySelector('.coach p')?.textContent || ''), null, { timeout: T(10000) });
+    ok(await sp.evaluate(() => window.__game.game.place('jester', 4, 7) === null), 'one Jester only: a second deploy is refused');
+    ok(await sp.evaluate(() => JSON.parse(localStorage.getItem('encore.save')).seen.includes('prologue')), 'scene progress saved');
+    // skip ahead: clear the prologue wave and the next chapter's scene introduces Queen
+    await sp.evaluate(() => { const w = window.__game; w.game.start(); w.game.spawnQueue = []; for (const e of [...w.game.enemies]) w.game.removeEnemy(e); });
+    await sp.waitForSelector('.story', { timeout: T(30000) });
+    ok(await sp.evaluate(() => window.__game.story.played.includes('unscripted') && window.__game.game.unlocked.has('queen')), 'chapter clear -> SCENE I plays and Queen joins the cast');
+    await sp.tap('.story .st-skip');
+    await sp.waitForFunction(() => [...document.querySelectorAll('.card:not(.locked)')].length === 2, null, { timeout: T(10000) });
+    ok(true, 'Queen\'s card joins the deck');
+    await sp.close();
     ok(errors.length === 0, `no page/console errors${errors.length ? `: ${errors.join(' | ')}` : ''}`);
     console.log('SMOKE PASSED');
   } catch (e) {

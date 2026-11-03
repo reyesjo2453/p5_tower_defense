@@ -152,7 +152,8 @@ export class Fx {
 
   /**
    * 2D comic impact burst at the point of contact: a camera-facing ink starburst ('punch' = yellow
-   * POW star, 'slash' = white diagonal slash cut, 'tech' = green glitch star). Pops then fades.
+   * POW star, 'slash' = white diagonal slash cut, 'tech' = green glitch star, 'fire' = orange
+   * flare, 'cue' = gold star). Pops then fades.
    */
   comicBurst(p, kind = 'punch', size = 0.9) {
     const m = new THREE.Sprite(new THREE.SpriteMaterial({ map: burstTexture(kind), transparent: true, depthTest: false, depthWrite: false }));
@@ -272,10 +273,10 @@ function burstTexture(kind) {
     }
     g.restore();
   } else {
-    const tech = kind === 'tech';
+    const col = { tech: '#39ff88', fire: '#ff6a1a', cue: '#ffd400' }[kind] ?? '#ffe600';
     star(12, 52, 118, 0, '#050505');
-    star(12, 46, 104, 0, tech ? '#39ff88' : '#ffe600', '#050505', 6);
-    star(8, 22, 48, 0.3, '#ffffff');
+    star(12, 46, 104, 0, col, '#050505', 6);
+    star(8, 22, 48, 0.3, kind === 'fire' ? '#ffd400' : '#ffffff');
   }
   bursts[kind] = new THREE.CanvasTexture(c);
   bursts[kind].colorSpace = THREE.SRGBColorSpace;

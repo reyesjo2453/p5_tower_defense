@@ -1,5 +1,40 @@
 # Changelog
 
+## 2.0.0 – ENCORE PROTOCOL: the story campaign
+
+- **Story campaign** in three acts and eight chapters (`src/story/script.js`, played by `src/ui/story.js`):
+  comic-panel scenes with the cast's cut-in art, typewriter speech boxes, narration captions,
+  ransom-note title cards and shake / flash / glitch / fire beats. Tap to advance; SKIP ends a scene.
+  The story is original. Its plot outline is in `docs/STORY.md` (spoilers).
+- **The mechanics are part of the story.**
+  - Losing resets the night "from the top" with a line from the Prompter, and a performance counter
+    that never resets keeps track.
+  - Rank-ups are rehearsals your body remembers.
+  - Breaking a Shadow's posture sends one of the sleepers home.
+  - The win screen's ENCORE is you.
+- **Guided lessons** (`src/story/lessons.js`, `src/ui/tutorial.js`):
+  - The Prompter coaches each new mechanic as its chapter introduces it, spotlighting the card,
+    button or unit to use.
+  - The first Baton Pass and the first All-Out hold time until you act.
+  - Finished lessons are remembered.
+- **Five unique Phantoms.** Each can be on stage only once, and the cast joins chapter by chapter.
+  - **PROMPTER** (Support, `medic-*` art) patches the Treasure (green numbers) and quickens nearby allies.
+  - **LIMELIGHT** (Caster, `caster-*` art) throws fire bursts that splash and leave Shadows burning.
+- **Rank-ups** (★ to ★★★, ¥) raise damage, posture damage, attack speed and range, with a silver /
+  gold floor aura.
+- **Blocking**: drag a placed unit, or tap it and press MOVE, to move it to another plate. It takes a
+  moment to settle, then waits 8 s before it can move again.
+- **Pacing**: early chapters are short and slow. Shadow HP scales by chapter, and the waves and
+  money are rebalanced around five units plus ranks. The balance tests still pass: the plan wins
+  with the mechanics, and loses without them or without ranks.
+- **Checkpoints and saves**: a loss restarts the current chapter. CONTINUE on the title resumes the
+  saved chapter.
+- **Pose-art pipeline**: optional `<id>-idle|windup|strike.png` frames are swapped by the attack
+  state machine (see `docs/ASSETS.md`).
+- **All-Out Attack** shows one panel per Phantom on stage (up to five).
+- `?unlock=all` opens a sandbox (whole cast, auto waves, no story). `?story=0` plays the campaign
+  without scenes or lessons.
+
 ## 1.5.0 – Close-up camera, bullet-time Baton Pass, 2.5D combat feel
 
 - **Camera** (`view.js` `CameraRig`):

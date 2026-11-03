@@ -30,6 +30,22 @@ export const UNIT_ART = {
     cutin: 'oracle-cutin.png',
     sprite: 'oracle-sprite.png',
   },
+  prompter: {
+    archetype: 'Support',
+    alias: ['medic'],
+    model: 'prompter.glb',
+    card: 'prompter-card.png',
+    cutin: 'prompter-cutin.png',
+    sprite: 'prompter-sprite.png',
+  },
+  limelight: {
+    archetype: 'Caster',
+    alias: ['caster'],
+    model: 'limelight.glb',
+    card: 'limelight-card.png',
+    cutin: 'limelight-cutin.png',
+    sprite: 'limelight-sprite.png',
+  },
 };
 
 // "THE SHOW'S OVER" finisher splash hero.
@@ -58,4 +74,6 @@ export const SPRITE_KEY = { mode: 'auto', threshold: 18 };
 // Optional per-sprite tweaks, keyed by unit id: { height (e.g. 1.1 for a small mascot-sized
 // figure), face ('right' | 'left': mirror toward the target), breath (bob amplitude, default
 // 0.04), lunge (attack dash, default 0.35), key ({ mode, threshold, close, sever } overriding SPRITE_KEY) }.
-export const SPRITE_TWEAKS = {};
+export const SPRITE_TWEAKS = {
+  prompter: { height: 1.35 }, // a cat-sized Phantom
+};

@@ -41,10 +41,13 @@ Lookup order for every file: `custom/` first, then the base folder, then the bui
 | Jester (Leader) | `jester.glb` | `jester-sprite.png` | `jester-card.png` | `jester-cutin.png` |
 | Queen (Vanguard) | `queen.glb` | `queen-sprite.png` | `queen-card.png` | `queen-cutin.png` |
 | Oracle (Tactician) | `oracle.glb` | `oracle-sprite.png` | `oracle-card.png` | `oracle-cutin.png` |
+| Prompter (Support) | `prompter.glb` | `prompter-sprite.png` | `prompter-card.png` | `prompter-cutin.png` |
+| Limelight (Caster) | `limelight.glb` | `limelight-sprite.png` | `limelight-card.png` | `limelight-cutin.png` |
 | Finisher splash ("THE SHOW'S OVER") | | | | `finisher.png` |
 
 - **Aliases.** Each name also works with `_` instead of `-`, and with the unit's alias from
-  `alias` in the manifest: Jester → `vanguard`, Queen → `guard`, Oracle → `tactician`. For example,
+  `alias` in the manifest: Jester → `vanguard`, Queen → `guard`, Oracle → `tactician`,
+  Prompter → `medic`, Limelight → `caster`. For example,
   `vanguard_cutin.png` works for Jester. Every name is tried in `custom/` before the base folder.
 - On the board, each unit uses the first of: its `.glb` model → its standing sprite PNG → its
   cut-in PNG (while `SPRITE_FROM_CUTIN` is on) → the built-in procedural figure.
@@ -54,6 +57,27 @@ Lookup order for every file: `custom/` first, then the base folder, then the bui
   manifest at the `.gltf`.
 - Use PNGs with a transparent background. The cut-ins are drawn with a white comic rim around
   the alpha edge, and tall portrait crops (about 2:3) read best.
+
+## Pose art (attack frames for billboards)
+
+A billboard unit can have three poses. With an idle pose it stands on that art. Its attack then
+swaps to the wind-up frame while it crouches and to the strike frame through the lunge and contact,
+and goes back to idle during the spring recoil.
+
+| Pose | File (any alias works, `-` or `_`) | Shown during |
+|---|---|---|
+| Idle | `<id>-idle.png` | standing, breathing, recoil end |
+| Wind-up | `<id>-windup.png` | ANTICIPATE (70 ms crouch) |
+| Strike | `<id>-strike.png` | LUNGE, HIT_STOP and the first half of the recoil |
+
+For example `vanguard-strike.png` works for Jester and `medic-windup.png` works for Prompter.
+
+- Use **real PNGs with transparency**, not JPEGs renamed `.png`.
+- Draw the **full body with feet**, and no card frame or painted background slashes.
+- Use the **same canvas size for all three poses**, with the feet on the same pixel row. The idle
+  pose's crop is reused for the other two so frames swap without jitter.
+- Draw the character **facing right**; `SPRITE_TWEAKS.<id>.face` mirrors it toward the target.
+- Any missing frame falls back to the idle pose, and a missing idle falls back to the sprite / cut-in.
 
 ## What happens to an imported model (`src/render/gltfUnits.js`)
 

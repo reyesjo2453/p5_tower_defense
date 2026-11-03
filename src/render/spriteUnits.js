@@ -102,18 +102,41 @@ function keyCard(texture, opts) {
   }
 }
 
-/** Load every resolved sprite URL ({ id: url|null }); failures warn and keep the procedural figure. */
-export async function loadUnitSprites(urls) {
+/**
+ * Load every resolved sprite URL ({ id: url|null }); failures warn and keep the procedural figure.
+ * `poses` ({ id: { idle, windup, strike } } of URLs) are optional pose art: when a unit has an idle
+ * pose it stands on that, and its attack swaps to the windup / strike frames. All poses of a unit
+ * share one canvas size, so the idle pose's trim crop is reused for the others (no jitter).
+ */
+export async function loadUnitSprites(urls, poses = {}) {
   const loader = new THREE.TextureLoader();
-  await Promise.all(Object.entries(urls).map(async ([id, url]) => {
+  const prep = async (url, tw) => {
+    const { texture, key } = keyCard(await loader.loadAsync(url), { ...SPRITE_KEY, ...tw.key });
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.anisotropy = 4;
+    return { texture, key };
+  };
+  await Promise.all(Object.entries(urls).map(async ([id, url0]) => {
+    const p = poses[id] ?? {};
+    const url = p.idle || url0;
     if (!url) return;
     try {
       const tw = SPRITE_TWEAKS[id] ?? {};
-      const { texture, key } = keyCard(await loader.loadAsync(url), { ...SPRITE_KEY, ...tw.key });
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.anisotropy = 4;
+      const { texture, key } = await prep(url, tw);
       const aspect = trim(texture);
-      templates.set(id, { texture, aspect, height: tw.height ?? SPRITE_HEIGHT, tw, url, key });
+      const frames = {};
+      for (const name of ['windup', 'strike']) {
+        if (!p[name]) continue;
+        try {
+          const f = (await prep(p[name], tw)).texture;
+          f.offset.copy(texture.offset);
+          f.repeat.copy(texture.repeat);
+          frames[name] = f;
+        } catch (err) {
+          console.warn(`[assets] ${id}: could not load ${name} pose ${p[name]}; holding the idle pose.`, err);
+        }
+      }
+      templates.set(id, { texture, aspect, height: tw.height ?? SPRITE_HEIGHT, tw, url, key, frames });
     } catch (err) {
       failures.set(id, String(err?.message || err));
       console.warn(`[assets] ${id}: could not load sprite ${url}; using the built-in figure.`, err);
@@ -129,7 +152,7 @@ export function hasUnitSprite(id) {
 export function spriteStatus() {
   return {
     loaded: [...templates.entries()].map(([id, t]) => ({
-      id, url: t.url, height: t.height, aspect: +t.aspect.toFixed(3),
+      id, url: t.url, height: t.height, aspect: +t.aspect.toFixed(3), poses: Object.keys(t.frames ?? {}),
       keyed: !!t.key?.keyed, kept: t.key?.keyed ? +t.key.kept.toFixed(3) : null,
     })),
     failed: Object.fromEntries(failures),
@@ -171,7 +194,7 @@ export function attackState(atk) {
 export function instantiateSprite(id) {
   const t = templates.get(id);
   if (!t) return null;
-  const { texture, aspect, height, tw } = t;
+  const { texture, aspect, height, tw, frames = {} } = t;
   const width = height * aspect;
   const breath = tw.breath ?? 0.04;
   const offset = Math.random() * Math.PI * 2; // de-sync neighbouring towers
@@ -195,6 +218,8 @@ export function instantiateSprite(id) {
   layer(0x050507, 0.11, -0.02);
   layer(0xffffff, 0.055, -0.01);
   const art = layer(0xffffff, 0, 0);
+  const mats = [];
+  body.traverse((o) => o.material && mats.push(o.material));
 
   // soft ink drop-shadow: the silhouette laid flat on the floor, stretching away from the camera
   const ink = new THREE.Mesh(PLANE, new THREE.MeshBasicMaterial({
@@ -204,6 +229,7 @@ export function instantiateSprite(id) {
   ink.position.y = 0.014;
   ink.renderOrder = -1;
   face.add(ink);
+  mats.push(ink.material);
 
   const shadow = new THREE.Mesh(DISC, new THREE.MeshBasicMaterial({
     map: shadowTexture(), transparent: true, opacity: 0.5, depthWrite: false, color: 0x000000,
@@ -226,6 +252,12 @@ export function instantiateSprite(id) {
     sprite: true,
     get landed() { return drop >= DROP; },
     get state() { return attackState(atk); },
+    poses: Object.keys(frames),
+    /** Blocking: fall onto a new plate (the view moves root first). */
+    redeploy() {
+      drop = 0;
+      atk = -1;
+    },
     tick(time, dt, camera, atkDir) {
       let event = null;
       // yaw-only billboard toward the camera
@@ -283,7 +315,14 @@ export function instantiateSprite(id) {
           atk = -1;
         }
       }
-      const stopped = attackState(atk) === 'HIT_STOP';
+      const state = attackState(atk);
+      const stopped = state === 'HIT_STOP';
+      // pose art: windup while anticipating, strike through the lunge, contact and first half of the
+      // recoil, idle otherwise (falls back to the idle art for any missing frame)
+      const frame = state === 'ANTICIPATE' ? frames.windup
+        : state === 'LUNGE' || stopped || (state === 'OVERSHOOT_RECOIL' && atk < T_RECOIL + ATTACK.OVERSHOOT_RECOIL * 0.5) ? frames.strike : null;
+      const map = frame ?? texture;
+      if (art.material.map !== map) for (const m of mats) m.map = map;
       if (lunge) root.position.addScaledVector(atkDir, lunge);
 
       // breathing idle: vertical bob + a small scale pulse, shadow shrinks/fades as the body rises

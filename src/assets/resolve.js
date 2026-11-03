@@ -69,3 +69,23 @@ export function portraitURLs(fallback) {
   const finisher = pick(FINISHER_ART, 'finisher', fallback('leader'));
   return { card, cutin, finisher, png };
 }
+
+export const POSES = ['idle', 'windup', 'strike'];
+
+/**
+ * Optional pose art for the billboards: { id: { idle, windup, strike } } (each a URL or absent),
+ * looked up as <id>-<pose>.png / <id>_<pose>.png and the same for each alias (e.g. vanguard-strike.png).
+ */
+export function poseURLs() {
+  const out = {};
+  for (const [id, a] of Object.entries(UNIT_ART)) {
+    const names = [id, ...(a.alias ?? [])];
+    const p = {};
+    for (const pose of POSES) {
+      const u = resolveAsset('portraits', names.flatMap((n) => [`${n}-${pose}.png`, `${n}_${pose}.png`]));
+      if (u) p[pose] = u;
+    }
+    if (Object.keys(p).length) out[id] = p;
+  }
+  return out;
+}

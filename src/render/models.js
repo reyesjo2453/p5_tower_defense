@@ -230,6 +230,89 @@ export function buildOracle() {
   return { root, parts: { body, shell, core, rings, wire }, height: 1.3 };
 }
 
+// ---------------------------------------------------------------- PROMPTER (support cat)
+export function buildPrompter() {
+  const root = new THREE.Group();
+  const fur = toon(0x0b0b10, { spec: 0.4, rim: 1.1, rimColor: 0xffe27a });
+  const gold = toon(0xffd400, { spec: 1.2, shininess: 90, rim: 0.5 });
+  const paper = toon(0xf4f0e6, { spec: 0.1 });
+  const body = new THREE.Group();
+  root.add(body);
+  const torso = mesh(new THREE.SphereGeometry(0.26, 18, 14), fur, 0, 0.3, 0);
+  torso.scale.set(1, 1.15, 0.9);
+  body.add(torso);
+  const head = new THREE.Group();
+  head.position.set(0, 0.72, 0.04);
+  body.add(head);
+  head.add(mesh(new THREE.SphereGeometry(0.2, 18, 14), fur));
+  for (const sx of [-1, 1]) {
+    const ear = mesh(new THREE.ConeGeometry(0.075, 0.18, 4), fur, sx * 0.12, 0.2, 0);
+    ear.rotation.z = -sx * 0.25;
+    head.add(ear);
+    const eye = mesh(new THREE.BoxGeometry(0.07, 0.022, 0.02), glowMat(0xffd400, 2.6), sx * 0.075, 0.02, 0.19);
+    eye.rotation.z = sx * 0.2;
+    eye.userData.noOutline = true;
+    head.add(eye);
+  }
+  const bow = mesh(new THREE.OctahedronGeometry(0.06, 0), gold, 0, 0.52, 0.17);
+  bow.scale.set(1.8, 0.8, 0.6);
+  body.add(bow);
+  const tail = mesh(new THREE.TorusGeometry(0.2, 0.035, 8, 20, Math.PI * 1.2), fur, -0.18, 0.32, -0.16);
+  tail.rotation.set(0, Math.PI / 2, 0.4);
+  body.add(tail);
+  const scroll = mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.3, 12), paper, 0.2, 0.14, 0.12);
+  scroll.rotation.z = Math.PI / 2.4;
+  body.add(scroll);
+  const arms = [scroll];
+  outline(root, 0.01);
+  shadows(root);
+  return { root, parts: { body, head, tail, arms, bow }, height: 1.0 };
+}
+
+// ---------------------------------------------------------------- LIMELIGHT (fire caster)
+export function buildLimelight() {
+  const root = new THREE.Group();
+  const coat = toon(0x6a1208, { spec: 0.8, shininess: 70, rim: 1.0, rimColor: 0xffb36a, side: THREE.DoubleSide });
+  const dark = toon(0x16090a, { spec: 0.3 });
+  const hairM = toon(0xf2c46a, { spec: 1.0, shininess: 80, rim: 0.8, rimColor: 0xffffff });
+  const body = new THREE.Group();
+  root.add(body);
+  const skirt = mesh(new THREE.ConeGeometry(0.34, 0.9, 10, 1, true), coat, 0, 0.45, 0);
+  body.add(skirt);
+  const chest = mesh(new THREE.CylinderGeometry(0.15, 0.2, 0.42, 10), dark, 0, 1.06, 0);
+  body.add(chest);
+  const head = new THREE.Group();
+  head.position.set(0, 1.42, 0);
+  body.add(head);
+  head.add(mesh(new THREE.SphereGeometry(0.14, 16, 12), dark));
+  head.add(mesh(new THREE.SphereGeometry(0.152, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.55), hairM, 0, 0.02, -0.01));
+  const tails = [];
+  for (const sx of [-1, 1]) {
+    const t = mesh(new THREE.ConeGeometry(0.07, 0.6, 8), hairM, sx * 0.17, -0.18, -0.05);
+    t.rotation.z = sx * 0.35;
+    head.add(t);
+    tails.push(t);
+  }
+  const visor = mesh(new THREE.BoxGeometry(0.2, 0.035, 0.02), glowMat(0xff6a1a, 2.4), 0, 0.02, 0.135);
+  visor.userData.noOutline = true;
+  head.add(visor);
+  const arms = [];
+  for (const sx of [-1, 1]) {
+    const arm = new THREE.Group();
+    arm.position.set(sx * 0.21, 1.22, 0);
+    arm.add(mesh(new THREE.CylinderGeometry(0.04, 0.035, 0.46, 8), coat, 0, -0.23, 0));
+    arm.rotation.z = sx * 0.2;
+    body.add(arm);
+    arms.push(arm);
+  }
+  const flame = mesh(new THREE.OctahedronGeometry(0.1, 1), glowMat(0xff6a1a, 3), 0.42, 1.0, 0.1);
+  flame.userData.noOutline = true;
+  body.add(flame);
+  outline(root, 0.012);
+  shadows(root);
+  return { root, parts: { body, head, arms, tails, flame }, height: 1.6 };
+}
+
 // ---------------------------------------------------------------- SHADOW (enemy)
 export function buildShadow(kind = 'mannequin') {
   const root = new THREE.Group();
@@ -354,4 +437,4 @@ export function cardTexture() {
   return cardTex;
 }
 
-export const BUILDERS = { jester: buildJester, queen: buildQueen, oracle: buildOracle };
+export const BUILDERS = { jester: buildJester, queen: buildQueen, oracle: buildOracle, prompter: buildPrompter, limelight: buildLimelight };
