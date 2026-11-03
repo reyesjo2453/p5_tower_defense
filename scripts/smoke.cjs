@@ -6,6 +6,9 @@
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 
+// GPU-less CI runners render the Palace at ~1 fps; wait on game state, with generous ceilings there.
+const SLOW = process.env.CI ? 6 : 1;
+const T = (ms) => ms * SLOW;
 const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(`  ok  ${m}`); };
 
 (async () => {
@@ -16,16 +19,17 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
   await new Promise((r) => setTimeout(r, 1500));
   const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   const page = await browser.newPage({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true });
+  page.setDefaultTimeout(T(30000));
   const errors = [];
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   page.on('console', (m) => m.type() === 'error' && !/fonts\.g|net::ERR/.test(m.text()) && errors.push(`console: ${m.text()}`));
   const G = (fn) => page.evaluate(fn);
   try {
     await page.goto(`http://localhost:${port}/`);
-    await page.waitForSelector('.overlay .startbtn', { timeout: 20000 });
+    await page.waitForSelector('.overlay .startbtn', { timeout: T(20000) });
     ok(true, 'title renders');
     await page.tap('.overlay .startbtn');
-    await page.waitForFunction(() => window.__game.rig.est === 0, null, { timeout: 20000 });
+    await page.waitForFunction(() => window.__game.rig.est === 0, null, { timeout: T(20000) });
     ok(true, 'establishing shot glides into the battle camera');
     await page.tap('[data-unit="jester"]');
     const pt = await G(() => {
@@ -34,11 +38,11 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
       return { x: ((v.x + 1) / 2) * innerWidth, y: ((1 - v.y) / 2) * innerHeight };
     });
     await page.touchscreen.tap(pt.x, pt.y);
-    await page.waitForTimeout(300);
+    await page.waitForFunction(() => window.__game.game.units.length > 0, null, { timeout: T(5000) }).catch(() => {});
     ok((await G(() => window.__game.game.units.map((u) => `${u.type}@${u.x},${u.y}`).join())) === 'jester@6,3', 'touch placement on a build plate');
     if (process.env.SMOKE_ASSETS) {
       // drop-in pipeline: glTF figure, Box3-normalized to ~1.8 with feet on the plate, animated by its clips
-      await page.waitForFunction(() => window.__game.view.units.size > 0 && [...window.__game.view.units.values()][0].spawnT >= 1, null, { timeout: 20000 });
+      await page.waitForFunction(() => window.__game.view.units.size > 0 && [...window.__game.view.units.values()][0].spawnT >= 1, null, { timeout: T(20000) });
       const m = await G(() => {
         const w = window.__game;
         const v = [...w.view.units.values()][0];
@@ -61,10 +65,10 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
     }
     await G(() => { const g = window.__game.game; g.cash = 999; g.place('queen', 7, 6); g.place('oracle', 8, 4); });
     await page.tap('.startbtn');
-    await page.waitForTimeout(1500);
+    await page.waitForFunction(() => window.__game.game.state === 'running' && window.__game.game.enemies.length > 0, null, { timeout: T(10000) }).catch(() => {});
     ok(await G(() => window.__game.game.state === 'running' && window.__game.game.enemies.length > 0), 'wave 1 marches');
     await G(() => { const g = window.__game.game; const e = g.enemies[0]; e.posture = 1; g.damage(g.units[0], e, 1, 5); });
-    await page.waitForSelector('.onemore', { timeout: 3000 });
+    await page.waitForSelector('.onemore', { timeout: T(3000) });
     ok(true, '1-MORE screen-slice plays on posture break');
     if (process.env.SMOKE_ASSETS) {
       ok(await G(() => /custom\/jester-cutin\.png$/.test(document.querySelector('.onemore .sil').src)), '1-MORE cut-in uses the PNG');
@@ -72,11 +76,11 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
     }
     ok(await G(() => window.__game.game.batonPass(window.__game.game.units[1])), 'baton pass');
     await G(() => { const g = window.__game.game; for (let i = 0; i < 3; i++) g.breakPosture(null, g.spawn('mannequin', 'a')); });
-    await page.waitForSelector('.allout-btn', { timeout: 3000 });
+    await page.waitForSelector('.allout-btn', { timeout: T(3000) });
     await page.tap('.allout-btn');
-    await page.waitForSelector('.allout', { timeout: 3000 });
+    await page.waitForSelector('.allout', { timeout: T(3000) });
     ok(true, 'ALL-OUT ATTACK comic panels');
-    await page.waitForSelector('.splash', { timeout: 15000 });
+    await page.waitForSelector('.splash', { timeout: T(15000) });
     ok(true, 'shatter + ransom-note splash');
     if (process.env.SMOKE_ASSETS) {
       ok(await G(() => [...document.querySelectorAll('.allout .panel img')].length === 0 || [...document.querySelectorAll('.allout .panel img')].every((i) => /cutin\.png$/.test(i.src))), 'All-Out panels use the cut-in PNGs');
@@ -84,7 +88,7 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
       require('node:fs').mkdirSync(path.join(__dirname, '..', 'shots'), { recursive: true });
       await page.screenshot({ path: path.join(__dirname, '..', 'shots', 'assets-splash.png') });
     }
-    await page.waitForFunction(() => !window.__game.state.cine, null, { timeout: 30000 });
+    await page.waitForFunction(() => !window.__game.state.cine, null, { timeout: T(30000) });
     ok(await G(() => window.__game.game.downed.length === 0), 'downed Shadows were finished');
     ok(errors.length === 0, `no page/console errors${errors.length ? `: ${errors.join(' | ')}` : ''}`);
     console.log('SMOKE PASSED');
