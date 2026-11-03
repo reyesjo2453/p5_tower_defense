@@ -1,8 +1,9 @@
 // Entry point: renderer + scene setup, input (touch/drag/tap), game loop, cut-in orchestration.
 import * as THREE from 'three';
-import { Game } from './sim/game.js';
+import { campaignGame, rehearsalGame, classicGame } from './sim/campaign.js';
 import { UNITS, CAMPAIGN } from './sim/data.js';
-import { buildArena, world } from './render/arena.js';
+import { buildArena, buildLights, world } from './render/arena.js';
+import { PersonaFx } from './render/personaFx.js';
 import { createPost } from './render/post.js';
 import { Fx } from './render/fx.js';
 import { View, CameraRig } from './render/view.js';
@@ -22,11 +23,18 @@ import { loadSave, writeSave } from './story/save.js';
 const params = new URLSearchParams(location.search);
 const coarse = matchMedia('(pointer: coarse)').matches;
 const quality = params.get('q') || (coarse ? 'mobile' : 'high');
-// ?story=0 skips scenes and lessons; ?unlock=all is a sandbox (whole cast, auto waves, no story)
+// ?story=0 skips scenes and lessons; ?unlock=all is a sandbox (the classic two-lane show with the
+// whole cast, no story); ?stage=N jumps to campaign stage N; ?rehearsal=T[&seed=S] opens a Rehearsal
 const sandbox = params.get('unlock') === 'all';
 const storyOn = params.get('story') !== '0' && !sandbox;
 const save = loadSave();
-const makeGame = (checkpoint = null) => new Game({ campaign: !sandbox, unlockAll: sandbox, checkpoint });
+const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V'];
+const startMode = sandbox
+  ? { kind: 'classic' }
+  : params.has('rehearsal')
+    ? { kind: 'rehearsal', tier: Math.max(1, Math.min(5, Number(params.get('rehearsal')) || 1)), seed: Number(params.get('seed')) || 1 }
+    : { kind: 'campaign', stage: Math.max(0, Math.min(CAMPAIGN.length - 1, Number(params.get('stage')) || 0)) };
+let mode = startMode;
 
 // ---------------------------------------------------------------- renderer / scene
 const canvas = document.getElementById('gl');
@@ -52,9 +60,10 @@ scene.fog = new THREE.FogExp2(0x0c0714, 0.025); // velvet Palace haze
 const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 240);
 const rig = new CameraRig(camera);
 
-let game = makeGame();
+let game = makeGame(mode);
 const palace = buildPalace(scene, { quality: quality === 'low' ? 'low' : 'high' });
-const arena = buildArena(scene, game.board, { quality: quality === 'low' ? 'low' : 'high' });
+buildLights(scene, { quality: quality === 'low' ? 'low' : 'high' });
+let arena = buildArena(scene, game.board, { quality: quality === 'low' ? 'low' : 'high', paths: game.paths });
 const post = createPost(renderer, scene, camera, { quality: quality === 'low' ? 'low' : 'high' });
 const fx = new Fx(scene);
 // BGM and SFX live on separate buses; the soundtrack starts on the first gesture and never restarts
@@ -62,6 +71,8 @@ const audio = createAudio();
 // floating damage numbers + WEAK!/CRITICAL! badges, projected over the canvas
 const ctext = new CombatText(document.getElementById('app'), camera);
 let view = new View(scene, fx, rig, audio.sfx, ctext);
+// Persona apparitions, aiming reticle, fire rings, ward, stun halos
+const personaFx = new PersonaFx(scene, fx, rig);
 
 // placement ghost: range ring + glowing plate following the finger
 const ghost = new THREE.Group();
@@ -96,10 +107,11 @@ const assetsReady = loadUnitModels(modelURLs())
     return loadUnitSprites(urls, poses);
   })
   .then((s) => { assets.sprites = s; });
-const state = { speed: 1, paused: false, cine: false, selected: null, card: null, dragging: false, freezeReq: null, firstBreak: true, moving: null, unitDrag: null };
+const state = { speed: 1, paused: false, cine: false, selected: null, card: null, dragging: false, freezeReq: null, firstBreak: true, moving: null, unitDrag: null, aiming: null };
 const hud = new Hud(document.getElementById('ui'), portraits, {
   cardDown(id) {
     if (busy()) return;
+    cancelAim();
     audio.sfx.tap();
     const on = game.onStage(id);
     if (on) {
@@ -117,7 +129,19 @@ const hud = new Hud(document.getElementById('ui'), portraits, {
     select(null);
     if (state.card) hud.hint(`Drag ${UNITS[id].name} onto a glowing plate (or tap a plate) · ¥${UNITS[id].cost}`);
   },
-  action(act) {
+  action(act, el) {
+    if (act === 'persona') {
+      startAim(el?.dataset.p);
+      return;
+    }
+    if (act === 'batonpass') {
+      if (game.batonPass()) select(null);
+      return;
+    }
+    if (act === 'call') {
+      game.callWave();
+      return;
+    }
     if (act === 'mute') {
       audio.toggleMute();
       return;
@@ -176,6 +200,61 @@ function tileAt(clientX, clientY) {
   ray.setFromCamera(ndc, camera);
   if (!ray.ray.intersectPlane(ground, hit)) return null;
   return { x: Math.round(hit.x + 5), y: Math.round(hit.z + 5) };
+}
+
+/** Board point (fractional tile units) under the pointer, for aiming a Persona. */
+function pointAt(clientX, clientY) {
+  const r = canvas.getBoundingClientRect();
+  ndc.set(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  if (!ray.ray.intersectPlane(ground, hit)) return null;
+  const x = hit.x + 5;
+  const y = hit.z + 5;
+  return x > -1 && y > -1 && x < 11 && y < 11 ? { x, y } : null;
+}
+
+/** Persona button: aim mode (bullet-time) until the player taps the board, or taps the button again. */
+function startAim(type) {
+  if (busy() || !type) return;
+  if (state.aiming === type) {
+    cancelAim();
+    return;
+  }
+  const u = game.onStage(type);
+  if (!u) return;
+  const p = game.persona(u);
+  if (!game.canSummon(type)) {
+    hud.hint(game.state !== 'running' ? 'Personas answer once the curtain is up.' : `${p.name} needs ${p.cost} SP. Break posture to fill the gauge.`);
+    return;
+  }
+  state.card = null;
+  hud.setSelectedCard(null);
+  select(null);
+  state.aiming = type;
+  game.setAiming(true);
+  audio.sfx.tap();
+  hud.root.querySelector('.aim-hint')?.remove();
+  const tip = document.createElement('div');
+  tip.className = 'aim-hint';
+  tip.textContent = `TAP THE RUNWAY · ${p.skill}`;
+  hud.root.appendChild(tip);
+  personaFx.aim({ x: 5, y: 5 }, p.radius, p.id);
+}
+
+function cancelAim() {
+  if (!state.aiming) return;
+  state.aiming = null;
+  game.setAiming(false);
+  personaFx.aim(null);
+  hud.root.querySelector('.aim-hint')?.remove();
+}
+
+function trySummon(pt) {
+  const type = state.aiming;
+  if (!type || !pt) return false;
+  const ok = game.summon(type, pt.x, pt.y);
+  cancelAim();
+  return ok;
 }
 
 function showGhost(tile) {
@@ -248,6 +327,10 @@ window.addEventListener('pointermove', (e) => {
     select(null);
   }
   if (state.card || state.moving) showGhost(tileAt(e.clientX, e.clientY));
+  if (state.aiming) {
+    const u = game.onStage(state.aiming);
+    if (u) personaFx.aim(pointAt(e.clientX, e.clientY), u.def.persona.radius, u.def.persona.id);
+  }
   if ((state.dragging && state.card) || state.unitDrag) {
     // dragging a card toward a screen edge slides the shot that way so far plates stay reachable
     const w = canvas.clientWidth, h = canvas.clientHeight;
@@ -271,7 +354,7 @@ canvas.addEventListener('pointerdown', (e) => {
   }
   downAt = { x: e.clientX, y: e.clientY };
   if (state.card) showGhost(tileAt(e.clientX, e.clientY));
-  else if (!busy() && game.mech.has('blocking')) {
+  else if (!busy() && !state.aiming && game.mech.has('blocking')) {
     const t = tileAt(e.clientX, e.clientY);
     const u = t && game.unitAt(t.x, t.y);
     state.unitDrag = u ? { u, x: e.clientX, y: e.clientY } : null;
@@ -321,6 +404,10 @@ window.addEventListener('pointerup', (e) => {
   }
   if (!overCanvas || !downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 18) return;
   downAt = null;
+  if (state.aiming) {
+    trySummon(pointAt(e.clientX, e.clientY));
+    return;
+  }
   if (state.card) {
     tryPlace(tile);
     return;
@@ -343,7 +430,10 @@ window.addEventListener('keydown', (e) => {
     const k = { ArrowLeft: [40, 0], ArrowRight: [-40, 0], ArrowUp: [0, 40], ArrowDown: [0, -40] }[e.key];
     rig.panBy(k[0], k[1], canvas.clientHeight);
   }
+  else if (e.key >= '1' && e.key <= '5') startAim(game.units[Number(e.key) - 1]?.type);
+  else if (e.key === 'b' || e.key === 'B') game.batonPass();
   else if (e.key === 'Escape') {
+    cancelAim();
     state.card = null;
     state.moving = null;
     hud.setSelectedCard(null);
@@ -359,7 +449,7 @@ async function playOneMore(unit, chain, baton) {
   hud.oneMore(unit.type, chain, baton);
   if (baton && state.firstBreak && !storyOn) {
     state.firstBreak = false;
-    hud.hint('POSTURE BREAK! Time slows: tap another unit before the gauge empties to BATON PASS.', 4200);
+    hud.hint('POSTURE BREAK! Time slows: tap BATON PASS before the gauge empties.', 4200);
   }
 }
 
@@ -393,42 +483,72 @@ const tutor = new Tutor(uiRoot, camera, {
   },
 });
 
-/** Play a chapter's scene (once per run unless `force`). */
+/** Play a stage's scene (once per run unless `force`). */
 async function playScene(id, force = false) {
   if (!storyOn || !SCENES[id] || (!force && save.seen.includes(id))) return;
   ghost.visible = false;
   state.card = null;
   hud.setSelectedCard(null);
   select(null);
+  cancelAim();
   await story.play(SCENES[id], { perf: save.perf }, id);
   if (!save.seen.includes(id)) save.seen.push(id);
   if (id === 'promptbox') save.revealed = true; // the Prompter has told them about the loop
+  if (id === 'strike') save.whole = true; // Jester remembers: his Persona has a name again
   writeSave(save);
   hud.setPerformance(save.perf, save.revealed);
 }
 
-/** Raise a chapter: its scene (first time), its lessons, then the curtain button. */
-async function enterChapter(idx, { scene = true } = {}) {
-  const ch = CAMPAIGN[idx];
-  if (scene) await playScene(ch.id);
-  hud.setPerformance(save.perf, save.revealed);
-  tutor.begin(ch.id, !storyOn || save.lessons.includes(ch.id));
+/** Raise a stage: its scene (first time), who joins, its lessons, then the curtain button. */
+async function enterStage({ scene: withScene = true } = {}) {
+  const g = game;
+  if (mode.kind === 'campaign') {
+    const ch = CAMPAIGN[mode.stage];
+    if (withScene) await playScene(ch.id);
+    if (g !== game) return; // a new game started while the scene played
+    // the scene may have restored Jester's Persona: rebuild so the name shows
+    if (save.whole && !game.personaWhole) game.personaWhole = true;
+    hud.setPerformance(save.perf, save.revealed);
+    tutor.begin(ch.id, !storyOn || save.lessons.includes(ch.id));
+    for (const id of ch.unlock) if (mode.stage > 0) hud.centerMsg(`${UNITS[id].name} JOINS`, 1600);
+  } else tutor.begin(null, true);
+  arena.alert(game.nextLanes);
   hud.root.querySelector('.startbtn')?.remove();
-  hud.startButton(sandbox ? 'START SHOW' : 'RAISE THE CURTAIN', () => {
-    if (game.state === 'ready') game.start();
-    else game.next();
-    if (!storyOn) hud.hint('Break posture (yellow bar) → 1-MORE → Baton Pass. Down 3 Shadows → ALL-OUT!', 5000);
+  hud.startButton(mode.kind === 'campaign' ? 'RAISE THE CURTAIN' : 'START SHOW', () => {
+    game.start();
+    if (!storyOn && mode.kind !== 'campaign') hud.hint('Break posture → 1-MORE. Fill SP → summon a Persona. Full SP → ALL-OUT!', 5000);
   });
-  if (!tutor.active) hud.hint(idx === 0 ? 'Drag your Phantom beside the crimson runway.' : `${ch.label} · ${ch.title.toUpperCase()}`, 3200);
+  if (!tutor.active) {
+    const ch = game.title ?? game.chapter;
+    hud.hint(mode.kind === 'campaign' && mode.stage === 0 ? 'Drag your Phantom beside the crimson runway.' : `${ch.label} · ${ch.title.toUpperCase()}`, 3200);
+  }
 }
 
 // ---------------------------------------------------------------- flow
-/** Start (or restart from a checkpoint) the show. `scene` plays the chapter scene if unseen. */
-function newGame(cp = null, { scene: withScene = true } = {}) {
+/** Build the Game for `m` ({ kind: campaign | rehearsal | classic, stage, tier, seed }). */
+function makeGame(m) {
+  let g;
+  if (m.kind === 'campaign') g = campaignGame(m.stage, { personaWhole: save.whole });
+  else if (m.kind === 'rehearsal') {
+    g = rehearsalGame({ tier: m.tier, seed: m.seed, chapter: Math.max(2, save.best), unlockAll: sandbox || save.finished, personaWhole: save.whole || sandbox });
+    g.title = { label: 'REHEARSAL', title: `Tier ${ROMAN[m.tier]} · #${m.seed}` };
+  } else {
+    g = classicGame({ unlockAll: true, personaWhole: true });
+    g.title = { label: 'SANDBOX', title: 'The Classic Show' };
+  }
+  return g;
+}
+
+/** Start (or restart) a stage. `scene` plays the stage's scene if it hasn't been seen. */
+function newGame(m = mode, { scene: withScene = true } = {}) {
+  mode = m;
   view.clear();
-  game = makeGame(cp);
+  personaFx.clear();
+  cancelAim();
+  game = makeGame(m);
+  arena.dispose();
+  arena = buildArena(scene, game.board, { quality: quality === 'low' ? 'low' : 'high', paths: game.paths });
   view = new View(scene, fx, rig, audio.sfx, ctext);
-  onEvents(game.drain()); // restored units from the checkpoint
   rig.resetView();
   state.speed = 1;
   state.moving = null;
@@ -436,12 +556,15 @@ function newGame(cp = null, { scene: withScene = true } = {}) {
   togglePause(false);
   select(null);
   rig.estGoal = 0; // glide down from the establishing shot into the battle framing
-  enterChapter(cp ? cp.waveIdx : 0, { scene: withScene });
+  enterStage({ scene: withScene });
 }
+
+const startBtn = (label, cls = '') => `<button class="startbtn live ${cls}" style="position:static;transform:skewX(-12deg)"><span>${label}</span></button>`;
 
 function titleScreen() {
   rig.estGoal = 1;
-  const cont = !sandbox && save.cp && CAMPAIGN[save.cp.waveIdx];
+  const cont = !sandbox && save.cp && CAMPAIGN[save.cp.stage];
+  const rehearse = !sandbox && (save.best >= 3 || save.finished);
   const ov = hud.overlay(`
     <div class="logo"><div class="a">ENCORE<br>PROTOCOL</div><div class="b">PHANTOM SHOWCASE</div></div>
     <div class="howto">
@@ -450,41 +573,67 @@ function titleScreen() {
       Tonight, you're on stage.
     </div>
     <div class="titlebtns">
-      <button class="startbtn live" style="position:static;transform:skewX(-12deg)"><span>${cont ? 'NEW SHOW' : 'ENTER'}</span></button>
-      ${cont ? `<button class="startbtn live cont" style="position:static;transform:skewX(-12deg)"><span>CONTINUE · ${cont.label}</span></button>` : ''}
+      ${startBtn(cont ? 'NEW SHOW' : 'ENTER', 'new')}
+      ${cont ? startBtn(`CONTINUE · ${cont.label}`, 'cont') : ''}
+      ${rehearse ? startBtn('REHEARSAL', 'reh') : ''}
     </div>
     <div class="tag">Unofficial, non-commercial fan showcase inspired by the Persona series' style. Not affiliated with ATLUS or SEGA.
     Built-in models, designs, story and code are original.</div>`);
-  const go = async (cp) => {
+  const go = async (m, fresh = false) => {
     ov.remove();
     await assetsReady; // models are tiny next to the title screen dwell time; never place before they're in
-    if (!cp) {
+    if (fresh) {
       // a fresh run: the story starts over, but the Prompter's performance count never resets
       save.seen = [];
       save.revealed = false;
+      save.whole = false;
       save.cp = null;
       writeSave(save);
     }
-    newGame(cp);
+    newGame(m);
   };
-  ov.querySelector('.startbtn:not(.cont)').addEventListener('click', () => go(null));
-  ov.querySelector('.cont')?.addEventListener('click', () => go(save.cp));
+  // ?unlock=all / ?stage / ?rehearsal start straight into that mode (debug + smoke tests)
+  const direct = startMode.kind !== 'campaign' || startMode.stage > 0;
+  ov.querySelector('.new').addEventListener('click', () => (direct ? go(startMode) : go({ kind: 'campaign', stage: 0 }, true)));
+  ov.querySelector('.cont')?.addEventListener('click', () => go({ kind: 'campaign', stage: save.cp.stage }));
+  ov.querySelector('.reh')?.addEventListener('click', () => tierPicker((tier) => go({ kind: 'rehearsal', tier, seed: newSeed() })));
 }
 
-/** The Treasure fell: the loop resets to the top of this chapter. */
+const newSeed = () => 1 + Math.floor(Math.random() * 99999);
+
+/** Rehearsal tiers open up as the story goes on (all of them once it is finished). */
+function tierPicker(pick) {
+  const top = sandbox || save.finished ? 5 : Math.max(1, Math.min(5, 1 + Math.floor(save.best / 3)));
+  const lanes = ['', '1 LANE', '2 LANES', '2 LANES', '3 LANES', '3 LANES · BOSS'];
+  const ov = hud.overlay(`<div class="logo"><div class="a">REHEARSAL</div><div class="b">A NEW STAGE EVERY TIME</div></div>
+    <div class="tierpick">${[1, 2, 3, 4, 5].map((t) => `<button class="live" data-t="${t}" ${t > top ? 'disabled style="opacity:.35"' : ''}>TIER ${ROMAN[t]}<small>${lanes[t]}</small></button>`).join('')}</div>
+    ${startBtn('BACK', 'back')}`);
+  ov.querySelectorAll('[data-t]').forEach((b) => b.addEventListener('click', () => {
+    if (b.disabled) return;
+    ov.remove();
+    pick(Number(b.dataset.t));
+  }));
+  ov.querySelector('.back').addEventListener('click', () => titleScreen());
+}
+
+/** The Treasure fell: the loop resets to the top of this stage. */
 function loopReset() {
-  save.perf++;
-  writeSave(save);
+  cancelAim();
+  if (mode.kind === 'campaign') {
+    save.perf++;
+    writeSave(save);
+  }
   const line = LOOP_LINES[save.perf % LOOP_LINES.length].replace('{perf}', save.perf);
-  const cp = game.checkpoint();
-  const ov = hud.overlay(`<div class="logo"><div class="a">CURTAIN<br>FALLS</div><div class="b">${game.chapter.label} · ${game.kills} SHADOWS SENT HOME</div></div>
-    ${storyOn ? `<div class="loopline"><b>PROMPTER</b>${line}</div>` : ''}
-    <button class="startbtn live" style="position:static;transform:skewX(-12deg)"><span>FROM THE TOP</span></button>`);
-  ov.querySelector('button').addEventListener('click', () => { ov.remove(); newGame(cp, { scene: false }); });
+  const ch = game.title ?? game.chapter;
+  const ov = hud.overlay(`<div class="logo"><div class="a">CURTAIN<br>FALLS</div><div class="b">${ch.label} · WAVE ${game.waveIdx + 1}/${game.waves.length} · ${game.kills} SHADOWS SENT HOME</div></div>
+    ${storyOn && mode.kind === 'campaign' ? `<div class="loopline"><b>PROMPTER</b>${line}</div>` : ''}
+    <div class="titlebtns">${startBtn('FROM THE TOP', 'again')}${mode.kind === 'rehearsal' ? startBtn('TITLE', 'title') : ''}</div>`);
+  ov.querySelector('.again').addEventListener('click', () => { ov.remove(); newGame(mode, { scene: false }); });
+  ov.querySelector('.title')?.addEventListener('click', () => { ov.remove(); titleScreen(); });
   rig.estGoal = 1;
 }
 
-/** The show is over. */
+/** The story is over. */
 async function finale() {
   fx.cardsRain(140, 7);
   save.cp = null;
@@ -492,26 +641,51 @@ async function finale() {
   writeSave(save);
   await playScene('ending', true);
   const ov = hud.overlay(`<div class="logo"><div class="a">THE SHOW'S<br>OVER</div><div class="b">PERFORMANCE #${save.perf} · ${game.kills} SHADOWS SENT HOME</div></div>
-    <button class="startbtn live" style="position:static;transform:skewX(-12deg)"><span>ENCORE</span></button>`);
-  ov.querySelector('button').addEventListener('click', () => {
+    <div class="titlebtns">${startBtn('ENCORE', 'enc')}${startBtn('REHEARSAL', 'reh')}</div>`);
+  ov.querySelector('.enc').addEventListener('click', () => {
     ov.remove();
     save.perf++; // you asked for an encore. Of course you did.
     save.seen = [];
     save.revealed = false;
+    save.whole = false;
     writeSave(save);
-    newGame();
+    newGame({ kind: 'campaign', stage: 0 });
   });
+  ov.querySelector('.reh').addEventListener('click', () => tierPicker((tier) => { ov.remove(); newGame({ kind: 'rehearsal', tier, seed: newSeed() }); }));
   rig.estGoal = 1;
 }
 
-/** A chapter's wave is cleared: checkpoint the next chapter, then raise it. */
-function intermission() {
-  const next = game.waveIdx + 1;
-  save.cp = { waveIdx: next, cash: game.cash, treasure: game.treasure, kills: game.kills, units: game.units.map((u) => ({ type: u.type, x: u.x, y: u.y, rank: u.rank, spent: u.spent })) };
-  writeSave(save);
-  hud.centerMsg('CURTAIN!', 1300);
+/** Every wave of the stage is cleared. */
+function stageClear() {
+  cancelAim();
+  arena.alert([]);
   select(null);
-  setTimeout(() => enterChapter(next), 1200);
+  if (mode.kind === 'campaign') {
+    const next = mode.stage + 1;
+    if (next >= CAMPAIGN.length) {
+      finale();
+      return;
+    }
+    save.cp = { stage: next };
+    save.best = Math.max(save.best, next);
+    writeSave(save);
+    hud.centerMsg('CURTAIN!', 1300);
+    fx.cardsRain(60, 6);
+    const ch = CAMPAIGN[mode.stage];
+    setTimeout(() => {
+      const ov = hud.overlay(`<div class="logo"><div class="a">${ch.label}<br>CLEARED</div><div class="b">${ch.title.toUpperCase()} · TREASURE ${game.treasure}/${game.rules.treasureHp} · ${game.kills} SHADOWS SENT HOME</div></div>
+        ${startBtn(`NEXT · ${CAMPAIGN[next].label}`, 'next')}`);
+      ov.querySelector('.next').addEventListener('click', () => { ov.remove(); newGame({ kind: 'campaign', stage: next }); });
+      rig.estGoal = 1;
+    }, 1400);
+    return;
+  }
+  fx.cardsRain(140, 7);
+  const ov = hud.overlay(`<div class="logo"><div class="a">TREASURE<br>SECURED</div><div class="b">${game.treasure}/${game.rules.treasureHp} · ${game.kills} SHADOWS</div></div>
+    <div class="titlebtns">${startBtn(mode.kind === 'rehearsal' ? 'NEW STAGE' : 'ENCORE', 'again')}${mode.kind === 'rehearsal' ? startBtn('TITLE', 'title') : ''}</div>`);
+  ov.querySelector('.again').addEventListener('click', () => { ov.remove(); newGame(mode.kind === 'rehearsal' ? { ...mode, seed: newSeed() } : mode); });
+  ov.querySelector('.title')?.addEventListener('click', () => { ov.remove(); titleScreen(); });
+  rig.estGoal = 1;
 }
 
 function onEvents(events) {
@@ -520,20 +694,23 @@ function onEvents(events) {
     tutor.onEvent(ev);
     switch (ev.t) {
       case 'wave': {
-        const ch = CAMPAIGN[ev.n - 1];
-        hud.centerMsg(sandbox ? (ev.boss ? 'CURTAIN CALL' : `WAVE ${ev.n}`) : (ch?.label ?? `WAVE ${ev.n}`), 1500);
-        if (!sandbox) {
-          save.cp = game.checkpoint();
-          writeSave(save);
-        }
+        const ch = game.title ?? game.chapter;
+        hud.centerMsg(ev.n === 1 ? ch.label : ev.boss ? 'CURTAIN CALL' : `WAVE ${ev.n}/${ev.total}`, 1500);
+        arena.alert([]);
         break;
       }
       case 'waveClear':
-        intermission();
+        hud.centerMsg('WAVE CLEAR', 1200);
+        arena.alert(ev.next);
         break;
-      case 'join':
-        for (const id of ev.units) hud.centerMsg(`${UNITS[id].name} JOINS`, 1600);
+      case 'summon': {
+        hud.summonCutIn(ev.unit.type, ev.persona);
+        const uv = view.unitView(ev.unit);
+        personaFx.summon(ev, uv?.base ?? null);
+        audio.sfx.magic?.();
+        post.halftone.uniforms.uAberration.value = 0.8;
         break;
+      }
       case 'oneMore':
         playOneMore(ev.unit, ev.chain, ev.baton);
         break;
@@ -545,17 +722,10 @@ function onEvents(events) {
         post.halftone.uniforms.uFlashColor.value.set(0xff1a3d);
         break;
       case 'baton':
-        hud.centerMsg('BATON PASS', 900);
+        hud.centerMsg(`BATON PASS → ${ev.to.def.name}`, 900);
         break;
       case 'won':
-        if (storyOn) finale();
-        else {
-          const ov = hud.overlay(`<div class="logo"><div class="a">TREASURE<br>SECURED</div><div class="b">${game.treasure}/${game.rules.treasureHp} · ${game.kills} SHADOWS</div></div>
-            <button class="startbtn live" style="position:static;transform:skewX(-12deg)"><span>ENCORE</span></button>`);
-          ov.querySelector('button').addEventListener('click', () => { ov.remove(); newGame(); });
-          fx.cardsRain(140, 7);
-          rig.estGoal = 1;
-        }
+        stageClear();
         break;
       case 'lost':
         loopReset();
@@ -625,7 +795,7 @@ function loop() {
   t += dt;
   const frozen = state.cine || state.paused || story.playing || tutor.hold;
   // a Baton Pass prompt runs in bullet-time on wall-clock time, so 2x speed doesn't shorten it
-  const steps = game.baton ? 1 : state.speed;
+  const steps = game.baton || state.aiming ? 1 : state.speed;
   if (!frozen) {
     for (let i = 0; i < steps; i++) game.update(dt);
     onEvents(game.drain());
@@ -639,6 +809,7 @@ function loop() {
   if (!state.cine) view.update(vdt, game, camera, state.selected);
   fx.update(state.cine && !state.freezeReq ? dt * 0.6 : vdt);
   arena.update(t, !!state.card);
+  personaFx.update(frozen ? 0 : dt, game, camera);
   palace.update(t);
   rig.update(dt);
   const u = post.halftone.uniforms;
@@ -646,7 +817,7 @@ function loop() {
   u.uFlash.value = Math.max(0, u.uFlash.value - dt * 2.5);
   if (u.uFlash.value <= 0) u.uFlashColor.value.set(0xffffff);
   post.render(dt, t);
-  hud.update(game);
+  hud.update(game, { aiming: state.aiming });
   tutor.update();
   if (state.freezeReq) {
     state.freezeReq = false;
@@ -663,4 +834,4 @@ resize();
 requestAnimationFrame(loop);
 
 // debug / smoke-test handle
-window.__game = { get game() { return game; }, state, hud, audio, get view() { return view; }, rig, post, fx, scene, palace, assets, assetsReady, newGame, requestAllOut, select, ctext, story, tutor, save };
+window.__game = { get game() { return game; }, get mode() { return mode; }, get arena() { return arena; }, state, hud, audio, get view() { return view; }, rig, post, fx, personaFx, scene, palace, assets, assetsReady, newGame, requestAllOut, select, ctext, story, tutor, save, startAim, trySummon };

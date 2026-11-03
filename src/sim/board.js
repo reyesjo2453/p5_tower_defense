@@ -1,4 +1,4 @@
-// Board geometry helpers derived from PATHS.
+// Board geometry helpers. A stage's paths (see stagegen.js) default to the classic two-lane PATHS.
 import { GRID, PATHS, CENTER } from './data.js';
 
 export function expand(corners) {
@@ -18,9 +18,9 @@ export function expand(corners) {
   return out;
 }
 
-export function buildBoard() {
+export function buildBoard(paths = PATHS) {
   const runway = new Set();
-  for (const corners of Object.values(PATHS)) for (const [x, y] of expand(corners)) runway.add(`${x},${y}`);
+  for (const corners of Object.values(paths)) for (const [x, y] of expand(corners)) runway.add(`${x},${y}`);
   const slots = [];
   for (let y = 0; y < GRID; y++) {
     for (let x = 0; x < GRID; x++) {
@@ -38,6 +38,16 @@ export function buildBoard() {
 }
 
 /** Waypoints (tile centres) for a path. */
-export function waypoints(pathId) {
-  return PATHS[pathId].map(([x, y]) => ({ x, y }));
+export function waypoints(pathId, paths = PATHS) {
+  return paths[pathId].map(([x, y]) => ({ x, y }));
+}
+
+/** How many runway tiles a unit with range `r` on plate (x, y) can reach (placement heuristic). */
+export function coverage(board, x, y, r) {
+  let n = 0;
+  for (const k of board.runway) {
+    const [a, b] = k.split(',').map(Number);
+    if (Math.hypot(a - x, b - y) <= r) n++;
+  }
+  return n;
 }

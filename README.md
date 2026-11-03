@@ -4,9 +4,15 @@
 
 ![The Palace establishing shot](docs/screenshots/01-title.png)
 
-Shadows march down a crimson runway toward a floating golden **Treasure**. Deploy your Phantoms beside
-it, **break their posture** to shatter their gold masks, chain **1-MORE → Baton Pass**, and when three are
-down, tap the flashing prompt for an **ALL-OUT ATTACK**.
+Shadows march down crimson runways toward a floating golden **Treasure**. Deploy your Phantoms beside
+them, **break their posture** to shatter their gold masks, chain **1-MORE → Baton Pass**, spend the SP
+the house roars at you to **summon Personas** onto the runway, and when the gauge is full, tap the
+flashing prompt for an **ALL-OUT ATTACK**.
+
+The story campaign runs fifteen stages over three acts. Each stage is a procedurally generated map
+(fixed seeds for the story; random ones in **Rehearsal** mode), and each introduces one new thing at
+a time: Jester alone on a single lane first, then summons, then the rest of the cast and the second
+and third lanes.
 
 | | |
 | --- | --- |
@@ -43,8 +49,10 @@ npm run dev          # prints a "Network:" URL such as http://192.168.1.20:5173 
 | --- | --- | --- |
 | Deploy | Drag a card onto a plate beside the runway, or tap a card then tap a plate | same |
 | Inspect / sell | Tap a deployed unit | click · `Esc` closes |
-| Baton Pass | After **1-MORE!**, tap another unit within 3 s | click |
-| All-Out Attack | Tap the flashing crimson **ALL-OUT ATTACK** prompt | `A` |
+| Baton Pass | After **1-MORE!**, tap the **BATON PASS** prompt (it picks the best ally), or tap an ally | `B` |
+| Persona summon | Tap a Persona button above the cards, then tap the runway (time slows while you aim) | `1`–`5` |
+| Next wave early | **CALL ▶** on the wave counter between waves | |
+| All-Out Attack | When the SP gauge is full, tap the flashing crimson **ALL-OUT ATTACK** prompt | `A` |
 | Speed / pause | `1×` and `❚❚` buttons | `Space` pauses |
 
 ## What's in it

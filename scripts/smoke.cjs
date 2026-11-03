@@ -168,8 +168,20 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
       ok(await G(() => /custom\/jester-cutin\.png$/.test(document.querySelector('.onemore .sil').src)), '1-MORE cut-in uses the PNG');
       ok(await G(() => { const v = [...window.__game.view.units.values()][0]; return v.model.mixer.time > 0; }), 'animation clips advancing');
     }
-    ok(await G(() => window.__game.game.batonPass(window.__game.game.units[1])), 'baton pass');
-    await G(() => { const g = window.__game.game; for (let i = 0; i < 3; i++) g.breakPosture(null, g.spawn('mannequin', 'a')); });
+    ok(await G(() => document.querySelector('.baton-prompt [data-bt="to"]').textContent.startsWith('TAP · TO')), 'baton prompt names the ally it will pass to');
+    await page.tap('.baton-prompt');
+    ok(await G(() => !window.__game.game.baton && window.__game.game.units.some((u) => u.buffs.some((b) => b.key === 'baton'))), 'tapping the prompt passes the baton to the best ally');
+    // Persona summon: SP gauge + button, aim (bullet-time), tap the runway
+    await G(() => { const g = window.__game.game; g.sp = 60; });
+    await page.waitForSelector('.persona-btn.ready', { timeout: T(5000) });
+    ok(true, 'SP gauge lights the Persona buttons');
+    const aimAt = await G(() => { const w = window.__game; w.startAim(w.game.units[0].type); const e = w.game.enemies[0]; return { x: e.x, y: e.y, aiming: w.state.aiming, slow: w.game.aiming }; });
+    ok(aimAt.aiming && aimAt.slow, 'Persona button enters aim mode (bullet-time)');
+    const sum = await page.evaluate((p) => { const w = window.__game; return { ok: w.trySummon(p), sp: w.game.sp }; }, aimAt);
+    ok(sum.ok, `summon lands on the runway ${JSON.stringify(sum)}`);
+    await page.waitForSelector('.summon-cut', { timeout: T(3000) });
+    ok(await G(() => window.__game.personaFx.live.length > 0), 'the Persona rises over the board + PERSONA! cut-in');
+    await G(() => { const g = window.__game.game; for (let i = 0; i < 3; i++) g.breakPosture(null, g.spawn('mannequin', 'a')); g.sp = g.rules.spMax; });
     await page.waitForSelector('.allout-btn', { timeout: T(3000) });
     await page.tap('.allout-btn');
     await page.waitForSelector('.allout', { timeout: T(3000) });
@@ -202,18 +214,37 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
     await sp.waitForSelector('.coach:not([style*="none"])', { timeout: T(5000) });
     const c0 = await sp.evaluate(() => ({ text: document.querySelector('.coach p').textContent, cards: [...document.querySelectorAll('.card:not(.locked)')].map((c) => c.dataset.unit).join(), focus: !!document.querySelector('.card.tut-focus') }));
     ok(/JESTER/.test(c0.text) && c0.cards === 'jester' && c0.focus, `prologue lesson spotlights the only card on stage (${c0.cards})`);
-    await sp.evaluate(() => window.__game.game.place('jester', 6, 3));
+    ok(await sp.evaluate(() => window.__game.game.lanes.length === 1 && window.__game.arena.gates.a && !window.__game.arena.gates.b), 'the prologue is a generated one-lane stage with a single spawn gate');
+    const slots = await sp.evaluate(() => window.__game.game.board.slots.slice(0, 2).map((s) => [s.x, s.y]));
+    await sp.evaluate((s) => window.__game.game.place('jester', s[0], s[1]), slots[0]);
     await sp.waitForFunction(() => /curtain/i.test(document.querySelector('.coach p')?.textContent || ''), null, { timeout: T(10000) });
-    ok(await sp.evaluate(() => window.__game.game.place('jester', 4, 7) === null), 'one Jester only: a second deploy is refused');
+    ok(await sp.evaluate((s) => window.__game.game.place('jester', s[0], s[1]) === null, slots[1]), 'one Jester only: a second deploy is refused');
     ok(await sp.evaluate(() => JSON.parse(localStorage.getItem('encore.save')).seen.includes('prologue')), 'scene progress saved');
-    // skip ahead: clear the prologue wave and the next chapter's scene introduces Queen
-    await sp.evaluate(() => { const w = window.__game; w.game.start(); w.game.spawnQueue = []; for (const e of [...w.game.enemies]) w.game.removeEnemy(e); });
+    ok(await sp.evaluate(() => getComputedStyle(document.querySelector('.spbar')).display === 'none'), 'no SP gauge before summons are taught');
+    // skip ahead: clear every wave of the prologue; the stage-clear card leads to SCENE I on a new map
+    const map0 = await sp.evaluate(() => JSON.stringify(window.__game.game.paths));
+    await sp.evaluate(() => { const g = window.__game.game; g.start(); g.waveIdx = g.waves.length - 1; g.spawnQueue = []; for (const e of [...g.enemies]) g.removeEnemy(e); });
+    await sp.waitForSelector('.overlay .startbtn', { timeout: T(20000) });
+    ok(await sp.evaluate(() => /CLEARED/.test(document.querySelector('.overlay .logo').textContent) && JSON.parse(localStorage.getItem('encore.save')).cp.stage === 1), 'stage clear: curtain card + checkpoint saved');
+    await sp.tap('.overlay .startbtn');
     await sp.waitForSelector('.story', { timeout: T(30000) });
-    ok(await sp.evaluate(() => window.__game.story.played.includes('unscripted') && window.__game.game.unlocked.has('queen')), 'chapter clear -> SCENE I plays and Queen joins the cast');
+    ok(await sp.evaluate(() => window.__game.story.played.includes('opening')), 'next stage -> SCENE I · OPENING NIGHT plays');
     await sp.tap('.story .st-skip');
-    await sp.waitForFunction(() => [...document.querySelectorAll('.card:not(.locked)')].length === 2, null, { timeout: T(10000) });
-    ok(true, 'Queen\'s card joins the deck');
+    ok(await sp.evaluate((m) => JSON.stringify(window.__game.game.paths) !== m && window.__game.game.chapterIdx === 1, map0), 'a different generated stage is built for the next scene');
     await sp.close();
+    // ---------------- stage III teaches summons (straight in with ?stage=2)
+    const s3 = await browser.newPage({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true });
+    s3.setDefaultTimeout(T(30000));
+    s3.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+    await s3.goto(`http://localhost:${port}/?stage=2&story=0`, { waitUntil: 'domcontentloaded' });
+    await s3.waitForSelector('.overlay .startbtn', { timeout: T(20000) });
+    await s3.tap('.overlay .startbtn');
+    await s3.waitForFunction(() => window.__game.game.chapterIdx === 2 && window.__game.game.mech.has('summon'), null, { timeout: T(20000) });
+    await s3.evaluate(() => { const g = window.__game.game; const s = g.board.slots[0]; g.place('jester', s.x, s.y); g.start(); });
+    await s3.waitForFunction(() => getComputedStyle(document.querySelector('.spbar')).display !== 'none' && document.querySelector('.persona-btn[data-p="jester"]'), null, { timeout: T(10000) });
+    ok(await s3.evaluate(() => document.querySelector('.persona-btn[data-p="jester"] .pn').textContent === 'NO ONE'), 'stage III: SP gauge + Jester\'s nameless Persona, NO ONE');
+    ok(await s3.evaluate(() => /WAVE 1\/4/.test(document.querySelector('.wavechip').textContent)), 'wave counter shows 1/4');
+    await s3.close();
     ok(errors.length === 0, `no page/console errors${errors.length ? `: ${errors.join(' | ')}` : ''}`);
     console.log('SMOKE PASSED');
   } catch (e) {

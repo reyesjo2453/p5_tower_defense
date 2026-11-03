@@ -1,7 +1,8 @@
 // The isometric arena: reflective obsidian floor, raised crimson runway with gold neon edges,
-// treasure dais, build-slot markers and the lighting rig.
+// treasure dais, build-slot markers and spawn gates. Rebuilt for every stage (the runways are
+// generated, see sim/stagegen.js); the lighting rig is built once (buildLights).
 import * as THREE from 'three';
-import { GRID, CENTER } from '../sim/data.js';
+import { GRID, CENTER, PATHS } from '../sim/data.js';
 import { toon, glowMat, shadows } from './toon.js';
 import { buildCrown } from './models.js';
 
@@ -13,10 +14,9 @@ export function world(x, y, h = 0) {
   return new THREE.Vector3(x - CENTER.x, h, y - CENTER.y);
 }
 
-export function buildArena(scene, board, { quality = 'high' } = {}) {
+export function buildArena(scene, board, { quality = 'high', paths = PATHS } = {}) {
   const group = new THREE.Group();
   scene.add(group);
-  const half = GRID / 2;
 
   // --- the play area: semi-transparent obsidian tiles over the Palace mirror floor (see palace.js)
   const tileMat = toon(0x0a0a0e, { spec: 1.4, shininess: 220, rim: 0, transparent: quality === 'high', opacity: quality === 'high' ? 0.78 : 1 });
@@ -117,28 +117,84 @@ export function buildArena(scene, board, { quality = 'high' } = {}) {
   });
   group.add(slotGlow);
 
-  // --- spawn gates
-  for (const path of [[0, 2], [10, 8]]) {
+  // --- spawn gates, one per lane, facing down its first run
+  const gates = {};
+  for (const [lane, corners] of Object.entries(paths)) {
+    const [sx, sy] = corners[0];
+    const [nx, ny] = corners[1];
     const gate = new THREE.Group();
-    const p = world(path[0], path[1]);
-    gate.position.copy(p);
-    for (const s of [-1, 1]) {
+    gate.position.copy(world(sx, sy));
+    gate.rotation.y = Math.atan2(-(ny - sy), nx - sx); // local +x points along the runway
+    for (const s2 of [-1, 1]) {
       const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.6, 0.12), toon(0x0a0a0e, { spec: 1, rim: 0.6, rimColor: 0xff1a3d }));
-      pillar.position.set(0, 0.8, s * 0.5);
+      pillar.position.set(0, 0.8, s2 * 0.5);
       gate.add(pillar);
     }
-    const arch = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.03, 6, 24, Math.PI), glowMat(0xff1a3d, 3));
+    const archMat = glowMat(0xff1a3d, 3);
+    const arch = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.03, 6, 24, Math.PI), archMat);
     arch.rotation.y = Math.PI / 2;
     arch.position.y = 1.6;
     gate.add(arch);
-    const portal = new THREE.Mesh(new THREE.PlaneGeometry(1, 1.6), glowMat(0xff1a3d, 1, { transparent: true, opacity: 0.25, additive: true, depthWrite: false, side: THREE.DoubleSide }));
+    const portalMat = glowMat(0xff1a3d, 1, { transparent: true, opacity: 0.25, additive: true, depthWrite: false, side: THREE.DoubleSide });
+    const portal = new THREE.Mesh(new THREE.PlaneGeometry(1, 1.6), portalMat);
     portal.rotation.y = Math.PI / 2;
     portal.position.y = 0.8;
     gate.add(portal);
+    // the warning arrow above the gate: lights up when the next wave will come through here
+    const warnMat = glowMat(0xffe600, 3, { transparent: true, opacity: 0 });
+    const warn = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.4, 3), warnMat);
+    warn.rotation.z = Math.PI;
+    warn.position.y = 2.25;
+    gate.add(warn);
     group.add(gate);
+    gates[lane] = { gate, portalMat, warn, warnMat, alert: false };
   }
+  const crownLight = new THREE.PointLight(0xffc400, 3, 4.5, 1.8);
+  crownLight.position.set(0, 1.6, 0);
+  group.add(crownLight);
 
-  // --- lighting: low ambient, strong key with sharp shadows, coloured rim lights
+  const runwayTiles = keys.map((k) => k.split(',').map(Number));
+  const chevrons = new THREE.InstancedMesh(chevGeo, chevMat, 60);
+  group.add(chevrons);
+
+  return {
+    group, crown, slots, slotGlow, slotGlowMat, runway, beam, crownLight, gates,
+    update(t, placing) {
+      crown.parts.crown.rotation.y = t * 0.8;
+      crown.parts.crown.position.y = 1.4 + Math.sin(t * 1.6) * 0.08;
+      crown.parts.jewel.rotation.y = -t * 2;
+      beam.material.opacity = 0.07 + Math.sin(t * 2) * 0.02;
+      crownLight.intensity = 2.6 + Math.sin(t * 3) * 0.6;
+      slotGlowMat.opacity += ((placing ? 0.35 + Math.sin(t * 6) * 0.15 : 0) - slotGlowMat.opacity) * 0.2;
+      // chevrons marching toward the crown along each path
+      updateChevrons(chevrons, t, paths);
+      // gates the next wave will use pulse yellow under a bobbing arrow
+      for (const g of Object.values(gates)) {
+        const on = g.alert;
+        g.warnMat.opacity += ((on ? 0.95 : 0) - g.warnMat.opacity) * 0.15;
+        g.warn.position.y = 2.25 + Math.sin(t * 6) * 0.1;
+        g.warn.rotation.y = t * 2;
+        g.portalMat.color.setHex(on ? 0xffe600 : 0xff1a3d).multiplyScalar(on ? 0.6 + Math.sin(t * 8) * 0.3 : 1);
+        g.portalMat.opacity = on ? 0.4 : 0.25;
+      }
+    },
+    /** Warn which lanes the next wave comes down ([] clears). */
+    alert(lanes) {
+      for (const [lane, g] of Object.entries(gates)) g.alert = lanes.includes(lane);
+    },
+    dispose() {
+      scene.remove(group);
+      // geometry only: toon() / outline() materials are shared and cached across stages
+      group.traverse((o) => o.geometry?.dispose());
+      chevTex.dispose();
+    },
+    runwayTiles,
+  };
+}
+
+/** Low ambient, a strong key with sharp shadows and coloured rims. Built once for the whole show. */
+export function buildLights(scene, { quality = 'high' } = {}) {
+  const half = GRID / 2;
   const hemi = new THREE.HemisphereLight(0x6a5a8a, 0x100008, 0.8);
   scene.add(hemi);
   const key = new THREE.DirectionalLight(0xfff1e0, 1.7);
@@ -157,39 +213,17 @@ export function buildArena(scene, board, { quality = 'high' } = {}) {
   const rimB = new THREE.DirectionalLight(0x6f7bff, 1.0);
   rimB.position.set(-8, 3, -6);
   scene.add(rimB);
-  const crownLight = new THREE.PointLight(0xffc400, 3, 4.5, 1.8);
-  crownLight.position.set(0, 1.6, 0);
-  scene.add(crownLight);
-
-  const runwayTiles = keys.map((k) => k.split(',').map(Number));
-  const chevrons = new THREE.InstancedMesh(chevGeo, chevMat, 60);
-  group.add(chevrons);
-
-  return {
-    group, crown, slots, slotGlow, slotGlowMat, runway, beam, crownLight, key,
-    update(t, placing) {
-      crown.parts.crown.rotation.y = t * 0.8;
-      crown.parts.crown.position.y = 1.4 + Math.sin(t * 1.6) * 0.08;
-      crown.parts.jewel.rotation.y = -t * 2;
-      beam.material.opacity = 0.07 + Math.sin(t * 2) * 0.02;
-      crownLight.intensity = 2.6 + Math.sin(t * 3) * 0.6;
-      slotGlowMat.opacity += ((placing ? 0.35 + Math.sin(t * 6) * 0.15 : 0) - slotGlowMat.opacity) * 0.2;
-      // chevrons marching toward the crown along each path
-      updateChevrons(chevrons, t);
-    },
-    runwayTiles,
-  };
+  return { key, hemi };
 }
 
-import { PATHS } from '../sim/data.js';
 const _m = new THREE.Matrix4();
 const _q = new THREE.Quaternion();
 const _s = new THREE.Vector3(1, 1, 1);
 const _p = new THREE.Vector3();
 const _e = new THREE.Euler();
-function updateChevrons(im, t) {
+function updateChevrons(im, t, paths) {
   let n = 0;
-  for (const corners of Object.values(PATHS)) {
+  for (const corners of Object.values(paths)) {
     const segs = [];
     let total = 0;
     for (let i = 0; i < corners.length - 1; i++) {

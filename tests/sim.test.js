@@ -2,9 +2,24 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Game } from '../src/sim/game.js';
 import { buildBoard, expand } from '../src/sim/board.js';
-import { PATHS, UNITS, ENEMIES, WAVES, CENTER } from '../src/sim/data.js';
+import { PATHS, UNITS, ENEMIES, WAVES, CENTER, CAMPAIGN } from '../src/sim/data.js';
+import { generateStage } from '../src/sim/stagegen.js';
+import { campaignGame, rehearsalGame, classicGame } from '../src/sim/campaign.js';
+import { autoplay, bestSlot } from './bot.js';
 
 const run = (g, secs, dt = 1 / 30) => { for (let t = 0; t < secs; t += dt) g.update(dt); };
+/** A free plate on `g` (the best-covering one). */
+const slotOf = (g) => {
+  const s = bestSlot(g, 'jester');
+  return [s.x, s.y];
+};
+/** Running, with a wave held open so timers tick without the stage ending. */
+const open = (g) => {
+  g.state = 'running';
+  g.waveIdx = 0;
+  g.spawnQueue = [{ at: 1e9, type: 'mannequin', path: g.lanes[0] }];
+  return g;
+};
 
 test('runways are contiguous and end at the treasure', () => {
   for (const corners of Object.values(PATHS)) {
@@ -91,24 +106,17 @@ test('downed enemies take bonus damage and recover posture', () => {
   assert.equal(e.posture, e.maxPosture);
 });
 
-test('All-Out Attack needs 3 downed (or a downed boss) and devastates them', () => {
+test('All-Out Attack devastates downed Shadows and splashes the rest', () => {
   const g = new Game({ unlockAll: true });
   g.state = 'running';
-  g.waveIdx = 0; // chapter-1 toughness
+  g.waveIdx = 0;
   const es = [g.spawn('mannequin', 'a'), g.spawn('mannequin', 'b'), g.spawn('brute', 'a'), g.spawn('brute', 'b')];
-  g.breakPosture(null, es[0]);
-  g.breakPosture(null, es[1]);
-  assert.equal(g.allOutReady, false);
-  g.breakPosture(null, es[2]);
-  assert.equal(g.allOutReady, true);
+  for (const e of es.slice(0, 3)) g.breakPosture(null, e);
+  assert.equal(g.allOutReady, false, 'needs a full SP gauge');
+  g.sp = g.rules.spMax;
   assert.ok(g.allOut());
   assert.equal(g.enemies.length, 1, 'only the standing brute survives');
   assert.ok(g.enemies[0].hp < g.enemies[0].maxHp);
-  const g2 = new Game({ unlockAll: true });
-  g2.state = 'running';
-  g2.waveIdx = 99;
-  g2.breakPosture(null, g2.spawn('boss', 'a'));
-  assert.equal(g2.allOutReady, true);
 });
 
 test('oracle marks slow enemies and expose posture', () => {
@@ -126,66 +134,208 @@ test('oracle marks slow enemies and expose posture', () => {
   assert.equal(p - e.posture, 10 * UNITS.oracle.mark.postureMul);
 });
 
-// ---------------------------------------------------------------- balance
-// The campaign bot plays the story order: each action waits until it is unlocked and affordable.
-export function bot(g, plan, { batons = true, allOut = true } = {}) {
-  g.start();
-  let i = 0;
-  for (let t = 0; t < 1500 && g.state === 'running'; t += 1 / 30) {
-    while (i < plan.length) {
-      const [act, type, x, y] = plan[i];
-      if (act === 'place') {
-        if (!g.unlocked.has(type) || g.cash < UNITS[type].cost) break;
-        assert.ok(g.place(type, x, y), `bot placement ${type}@${x},${y}`);
-      } else if (act === 'rank') {
-        const u = g.onStage(type);
-        const c = g.rankCost(u);
-        if (c == null || g.cash < c) break;
-        assert.ok(g.rankUp(u));
+// ---------------------------------------------------------------- campaign + balance
+test('fifteen stages: a generated map each, cast and mechanics unlocked one stage at a time', () => {
+  assert.equal(CAMPAIGN.length, 15);
+  const g0 = campaignGame(0);
+  assert.deepEqual([...g0.unlocked], ['jester'], 'the prologue is Jester alone');
+  assert.equal(g0.lanes.length, 1, 'the prologue has one lane');
+  assert.ok(g0.place('jester', ...slotOf(g0)));
+  g0.cash = 999;
+  assert.equal(g0.place('jester', ...slotOf(g0)), null, 'no second Jester');
+  assert.ok(!g0.mech.has('summon') && !g0.mech.has('baton'));
+  // the first two stages are wins on one lane; summons arrive in stage 3, partners after that
+  assert.equal(campaignGame(1).lanes.length, 1);
+  assert.ok(campaignGame(2).mech.has('summon') && !campaignGame(1).mech.has('summon'));
+  assert.ok(campaignGame(3).unlocked.has('queen') && !campaignGame(2).unlocked.has('queen'));
+  assert.ok(!campaignGame(9).mech.has('blocking') && campaignGame(10).mech.has('blocking'), 'Blocking waits for Act III');
+  const last = campaignGame(14);
+  assert.deepEqual([...last.unlocked].sort(), Object.keys(UNITS).sort());
+  assert.ok(last.mech.has('allout') && last.lanes.length === 3);
+  assert.ok(last.waves.at(-1).some((grp) => grp.type === 'boss'), 'the finale brings the Impresario');
+  // every stage introduces at most one cast member
+  for (const ch of CAMPAIGN) assert.ok(ch.unlock.length <= 1, ch.id);
+});
+
+test('the generator makes clean runways: contiguous, inside the board, lanes never touching', () => {
+  for (let seed = 1; seed <= 40; seed++) {
+    for (const [lanes, tier] of [[1, 1], [2, 3], [3, 5]]) {
+      const st = generateStage({ seed, lanes, tier });
+      assert.equal(Object.keys(st.paths).length, lanes, `seed ${seed}`);
+      const owner = new Map();
+      for (const [id, corners] of Object.entries(st.paths)) {
+        const tiles = expand(corners);
+        assert.deepEqual(tiles.at(-1), [CENTER.x, CENTER.y]);
+        const [sx, sy] = tiles[0];
+        assert.ok(sx === 0 || sy === 0 || sx === 10 || sy === 10, 'spawns on the edge');
+        for (let i = 1; i < tiles.length; i++) assert.equal(Math.abs(tiles[i][0] - tiles[i - 1][0]) + Math.abs(tiles[i][1] - tiles[i - 1][1]), 1);
+        for (const [x, y] of tiles) {
+          assert.ok(x >= 0 && y >= 0 && x <= 10 && y <= 10);
+          if (Math.abs(x - 5) <= 1 && Math.abs(y - 5) <= 1) continue; // the dais is shared
+          owner.set(`${x},${y}`, id);
+        }
       }
-      i++;
+      for (const [k, id] of owner) {
+        const [x, y] = k.split(',').map(Number);
+        for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+          const o = owner.get(`${x + dx},${y + dy}`);
+          assert.ok(!o || o === id, `lanes ${id}/${o} touch at ${k} (seed ${seed})`);
+        }
+      }
+      const b = buildBoard(st.paths);
+      assert.ok(b.slots.length >= 12 * lanes, `enough plates (seed ${seed}: ${b.slots.length})`);
     }
-    if (batons && g.baton) g.batonPass(g.units.find((u) => u !== g.baton.from));
-    if (allOut && g.allOutReady) g.allOut();
-    g.update(1 / 30);
-    g.drain();
   }
-  return g.state;
-}
-
-export const PLAN = [
-  ['place', 'jester', 6, 3], ['place', 'queen', 4, 7], ['place', 'oracle', 8, 4],
-  ['place', 'prompter', 5, 7], ['rank', 'jester'], ['place', 'limelight', 2, 6], ['rank', 'queen'],
-  ['rank', 'limelight'], ['rank', 'oracle'], ['rank', 'jester'], ['rank', 'queen'], ['rank', 'prompter'],
-  ['rank', 'limelight'], ['rank', 'oracle'], ['rank', 'prompter'],
-];
-
-test('a sensible plan wins the full campaign', () => {
-  for (const [act, type, x, y] of PLAN) if (act === 'place') assert.ok(new Game().board.slotSet.has(`${x},${y}`), `${type}@${x},${y} is a slot`);
-  const g = new Game();
-  assert.equal(bot(g, PLAN), 'won');
-  assert.ok(g.treasure > 0);
+  // deterministic: the story's pinned seeds always give the same map
+  assert.deepEqual(generateStage(CAMPAIGN[4].stage), generateStage(CAMPAIGN[4].stage));
 });
 
-test('the 1-MORE / Baton / All-Out mechanics matter: same plan without them loses', () => {
-  assert.equal(bot(new Game(), PLAN, { batons: false, allOut: false }), 'lost');
+test('every story stage is winnable with the mechanics, lost doing nothing', () => {
+  for (let i = 0; i < CAMPAIGN.length; i++) {
+    const g = campaignGame(i, { personaWhole: i >= 12 });
+    assert.equal(autoplay(g), 'won', `${CAMPAIGN[i].id} should be winnable`);
+    assert.ok(g.treasure >= 8, `${CAMPAIGN[i].id} wins with room to spare (${g.treasure})`);
+    if (i > 0) assert.equal(autoplay(campaignGame(i), { place: false }), 'lost', `${CAMPAIGN[i].id}: doing nothing loses`);
+  }
 });
 
-test('doing nothing loses', () => {
-  assert.equal(bot(new Game(), []), 'lost');
+test('the opening stages are gentle; the late ones need Personas, batons and the All-Out', () => {
+  for (const i of [0, 1, 2]) {
+    const g = campaignGame(i);
+    assert.equal(autoplay(g, { summons: false, batons: false, allOut: false }), 'won');
+    assert.ok(g.treasure >= 15, `${CAMPAIGN[i].id} is forgiving (${g.treasure})`);
+  }
+  for (const i of [12, 13]) assert.equal(autoplay(campaignGame(i, { personaWhole: true }), { summons: false, batons: false, allOut: false }), 'lost', `${CAMPAIGN[i].id} needs the mechanics`);
+  assert.equal(autoplay(campaignGame(14, { personaWhole: true }), { ranks: false }), 'lost', 'the finale needs rehearsals');
 });
 
-test('five unique Phantoms: one of each on stage, unlocked chapter by chapter', () => {
-  const g = new Game();
-  assert.deepEqual([...g.unlocked], ['jester'], 'the prologue is Jester alone');
-  assert.ok(g.place('jester', 6, 3));
+test('rehearsals: a fresh procedural stage per seed, tiers set lanes and toughness', () => {
+  const a = rehearsalGame({ tier: 1, seed: 5, unlockAll: true });
+  const b = rehearsalGame({ tier: 1, seed: 6, unlockAll: true });
+  assert.notDeepEqual(a.paths, b.paths);
+  assert.equal(a.lanes.length, 1);
+  assert.equal(rehearsalGame({ tier: 5, seed: 5 }).lanes.length, 3);
+  assert.ok(rehearsalGame({ tier: 5, seed: 5 }).hp > a.hp);
+  assert.equal(autoplay(rehearsalGame({ tier: 3, seed: 9, unlockAll: true, personaWhole: true })), 'won');
+});
+
+test('classic show: the original two-lane board and eight waves still play', () => {
+  const g = classicGame({ unlockAll: true });
+  assert.deepEqual(g.paths, PATHS);
+  assert.equal(g.waves.length, 8);
+  assert.equal(autoplay(g), 'won');
+});
+
+// ---------------------------------------------------------------- SP + Personas
+test('posture breaks fill SP; summons spend it; a full gauge is the All-Out Attack', () => {
+  const g = open(campaignGame(14, { personaWhole: true }));
+  g.cash = 9999;
+  const q = g.place('queen', ...slotOf(g));
+  const e = g.spawn('brute', 'a');
+  e.posture = 1;
+  g.damage(q, e, 1, 5);
+  assert.equal(g.sp, g.rules.spBreak);
+  assert.equal(g.canSummon('queen'), false, 'not enough SP yet');
+  g.sp = 40;
+  assert.ok(g.canSummon('queen'));
+  assert.ok(g.summon('queen', e.x, e.y));
+  assert.equal(g.sp, 0);
+  assert.ok(g.drain().some((x) => x.t === 'summon' && x.persona.name === 'VERDICT'));
+  assert.equal(g.allOutReady, false);
+  g.sp = g.rules.spMax;
+  assert.equal(g.allOutReady, true);
+  assert.ok(g.allOut());
+  assert.equal(g.sp, 0, 'the All-Out spends the whole gauge');
+  assert.equal(g.summon('oracle', 5, 5), false, 'Oracle is not on stage');
+});
+
+test('each Persona does its own thing', () => {
+  const setup = () => {
+    const g = open(campaignGame(14, { personaWhole: false }));
+    g.cash = 9999;
+    for (const t of ['jester', 'queen', 'oracle', 'prompter', 'limelight']) g.place(t, ...slotOf(g));
+    g.sp = 999;
+    const e = g.spawn('mannequin', 'a');
+    g.pushBack(e, -6); // walk it 6 tiles in
+    return { g, e };
+  };
+  // NO ONE: Curtain Wind pushes back down the runway
+  let { g, e } = setup();
+  const w0 = e.walked;
+  g.summon('jester', e.x, e.y);
+  assert.ok(Math.abs(e.walked - (w0 - UNITS.jester.persona.push)) < 1e-6, 'pushed back');
+  assert.ok(e.posture < e.maxPosture);
+  assert.equal(g.persona(g.onStage('jester')).name, 'NO ONE');
+  assert.equal(new Game({ personaWhole: true, unlockAll: true }).persona({ def: UNITS.jester }).name, 'HARLEQUIN');
+  // VERDICT: stun holds it in place
+  ({ g, e } = setup());
+  g.summon('queen', e.x, e.y);
+  assert.ok(e.stun > 0);
+  const x0 = e.x, y0 = e.y;
+  g.updateEnemy(e, 0.5);
+  assert.deepEqual([e.x, e.y], [x0, y0]);
+  // SIGHTLINE: marks
+  ({ g, e } = setup());
+  g.summon('oracle', e.x, e.y);
+  assert.ok(e.mark >= UNITS.oracle.persona.mark - 1e-9);
+  // GHOSTLIGHT: heals and wards the Treasure
+  ({ g, e } = setup());
+  g.treasure = 10;
+  g.summon('prompter', e.x, e.y);
+  assert.equal(g.treasure, 13);
+  assert.equal(g.ward, 3);
+  e.seg = e.wp.length; // reaches the Treasure
+  g.updateEnemy(e, 0.01);
+  assert.equal(g.treasure, 13, 'warded');
+  assert.equal(g.ward, 2);
+  // FLASHPAPER: a burning ring that lingers
+  ({ g, e } = setup());
+  g.summon('limelight', e.x, e.y);
+  assert.equal(g.zones.length, 1);
+  g.updateEnemy(e, 0.1);
+  assert.ok(e.burn && e.burn.dps > 0);
+  run(g, UNITS.limelight.persona.zone / g.rules.bulletTime + 1); // (breaks may open bullet-time)
+  assert.equal(g.zones.length, 0, 'the ring burns out');
+});
+
+test('aiming a Persona slows time; Baton Pass picks the best ally by itself', () => {
+  const g = open(classicGame({ unlockAll: true }));
+  g.setAiming(true);
+  run(g, 1);
+  assert.ok(g.timeScale < 0.3, `bullet-time while aiming (${g.timeScale})`);
+  g.setAiming(false);
+  run(g, 1);
+  assert.ok(g.timeScale > 0.95);
   g.cash = 999;
-  assert.equal(g.place('jester', 4, 7), null, 'no second Jester');
-  assert.equal(g.place('queen', 4, 7), null, 'Queen has not joined yet');
-  assert.ok(!g.mech.has('baton') && !g.mech.has('allout'));
-  g.applyUnlocks(4);
-  assert.deepEqual([...g.unlocked].sort(), Object.keys(UNITS).sort());
-  assert.ok(g.mech.has('allout') && g.mech.has('blocking') && g.mech.has('rank'));
+  const a = g.place('queen', 1, 1);
+  const far = g.place('oracle', 8, 1);
+  const near = g.place('jester', 2, 1);
+  const e = g.spawn('brute', 'a');
+  e.x = 1; e.y = 2;
+  e.posture = 1;
+  g.damage(a, e, 1, 5);
+  assert.equal(g.batonTarget(), near, 'the ally with a Shadow in reach');
+  assert.ok(g.batonPass());
+  assert.ok(near.buffs.some((b) => b.key === 'baton'));
+  assert.ok(!far.buffs.length);
+});
+
+test('waves within a stage: a break, a CALL to skip it, the gate warning', () => {
+  const g = campaignGame(4);
+  g.place('jester', ...slotOf(g));
+  g.start();
+  assert.equal(g.waveIdx, 0);
+  // kill everything as it appears until the wave is over
+  for (let t = 0; t < 300 && g.breakT == null; t += 1 / 30) {
+    g.update(1 / 30);
+    for (const e of [...g.enemies]) g.damage(null, e, 1e9, 0, { raw: true });
+  }
+  assert.ok(g.breakT > 0, 'between waves');
+  const clear = g.drain().find((x) => x.t === 'waveClear');
+  assert.ok(clear && clear.next.length >= 1 && clear.next.every((l) => g.lanes.includes(l)));
+  g.callWave();
+  g.update(1 / 30);
+  assert.equal(g.waveIdx, 1, 'CALL brings the next wave now');
 });
 
 test('rank-ups scale a unit; blocking moves it with a cooldown; sell refunds half of everything', () => {
@@ -233,26 +383,6 @@ test('Prompter patches the Treasure and quickens allies; Limelight sets Shadows 
   g.updateEnemy(e, 0.6);
   assert.ok(e.hp < hp, 'burn ticks');
   assert.ok(g.drain().some((x) => x.t === 'hit' && x.dot));
-});
-
-test('campaign mode stops for the story between chapters and checkpoints restart a chapter', () => {
-  const g = new Game({ campaign: true });
-  g.place('jester', 6, 3);
-  g.start();
-  for (let t = 0; t < 400 && g.state === 'running'; t += 1 / 30) g.update(1 / 30);
-  assert.equal(g.state, 'intermission');
-  assert.ok(g.drain().some((x) => x.t === 'waveClear'));
-  g.next();
-  assert.equal(g.waveIdx, 1);
-  assert.ok(g.unlocked.has('queen'));
-  const cp = g.checkpoint();
-  assert.equal(cp.waveIdx, 1);
-  const g2 = new Game({ campaign: true, checkpoint: cp });
-  assert.equal(g2.units.length, 1);
-  assert.ok(g2.drain().some((x) => x.t === 'place' && x.restored));
-  g2.start();
-  assert.equal(g2.waveIdx, 1);
-  assert.equal(g2.cash, cp.cash);
 });
 
 test('waves are well-formed', () => {
