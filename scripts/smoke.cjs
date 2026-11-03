@@ -52,7 +52,7 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
         const box = new art.geometry.boundingBox.constructor().setFromObject(art);
         return { sprite: !!v.model.sprite, h: box.max.y - box.min.y, minY: box.min.y, base: v.base.y, bodyY: v.model.parts.body.position.y,
           sh: v.model.parts.shadow.material.opacity, loaded: w.assets.sprites.loaded.map((l) => l.id).sort().join(), models: w.assets.models.loaded.length,
-          tex: v.model.parts.art.material.map.image.src };
+          tex: w.assets.sprites.loaded.find((l) => l.id === 'jester').url };
       });
       await G(() => window.__game.view.units.values().next().value.model.parts.art.geometry.computeBoundingBox());
       const a = await read();
@@ -66,6 +66,17 @@ const ok = (c, m) => { if (!c) throw new Error(`SMOKE FAIL: ${m}`); console.log(
       ok(Math.abs(a.bodyY) <= 0.041 && a.bodyY !== b.bodyY && a.sh !== b.sh, `breathing bob + shadow pulse animate (y ${a.bodyY.toFixed(4)}->${b.bodyY.toFixed(4)}, shadow ${a.sh.toFixed(3)}->${b.sh.toFixed(3)})`);
       require('node:fs').mkdirSync(path.join(__dirname, '..', 'shots'), { recursive: true });
       await page.screenshot({ path: path.join(__dirname, '..', 'shots', 'sprites-board.png') });
+    }
+    if (!process.env.SMOKE_SPRITES && !process.env.SMOKE_ASSETS) {
+      // whatever art is committed in public/portraits: card-style PNGs must be keyed down to a figure
+      await page.waitForFunction(() => window.__game.assets.sprites, null, { timeout: T(20000) });
+      const keyed = await G(() => window.__game.assets.sprites.loaded.filter((l) => l.keyed));
+      for (const k of keyed) ok(k.kept > 0.04 && k.kept < 0.9, `${k.id} billboard keyed out of its card (${k.url.split('/').pop()}, kept ${(k.kept * 100).toFixed(0)}%)`);
+      if (keyed.length) {
+        require('node:fs').mkdirSync(path.join(__dirname, '..', 'shots'), { recursive: true });
+        await page.waitForFunction(() => [...window.__game.view.units.values()][0]?.spawnT >= 1, null, { timeout: T(20000) });
+        await page.screenshot({ path: path.join(__dirname, '..', 'shots', 'keyed-board.png') });
+      }
     }
     if (process.env.SMOKE_ASSETS) {
       // drop-in pipeline: glTF figure, Box3-normalized to ~1.8 with feet on the plate, animated by its clips

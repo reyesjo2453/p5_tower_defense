@@ -37,6 +37,9 @@ Lookup order for every file: `custom/` first, then the base folder, then the bui
 | Oracle (Tactician) | `oracle.glb` | `oracle-sprite.png` | `oracle-card.png` | `oracle-cutin.png` |
 | Finisher splash ("THE SHOW'S OVER") | | | | `finisher.png` |
 
+- **Aliases.** Each name also works with `_` instead of `-`, and with the unit's alias from
+  `alias` in the manifest: Jester → `vanguard`, Queen → `guard`, Oracle → `tactician`. For example,
+  `vanguard_cutin.png` works for Jester. Every name is tried in `custom/` before the base folder.
 - On the board, each unit uses the first of: its `.glb` model → its standing sprite PNG → its
   cut-in PNG (while `SPRITE_FROM_CUTIN` is on) → the built-in procedural figure.
 
@@ -69,22 +72,33 @@ Lookup order for every file: `custom/` first, then the base folder, then the bui
 
 A unit with a PNG but no model stands on its plate as a 2D paper cut-out:
 
-1. **Load and trim.** `THREE.TextureLoader` loads the PNG. Transparent margins are trimmed, so
-   the lowest opaque pixel touches the plate and the plane hugs the art.
-2. **Billboard.** A plane with `transparent: true, alphaTest: 0.1` turns on the vertical axis
+1. **Load and key.** `THREE.TextureLoader` loads the PNG. If its edges are mostly opaque (a
+   rectangular card rather than a cut-out), a copy is keyed on a canvas (`src/render/keyout.js`)
+   so only the figure stands on the board:
+   - Uniform frame lines are stripped from each edge.
+   - The near-black backdrop (max RGB below `SPRITE_KEY.threshold`, default 18) is flood-filled
+     away from the edges. Black enclosed by the figure is kept.
+   - Stray text and stars are dropped, keeping the main figure and any large detached parts.
+   - The HUD cards, unit panel and cut-in overlays still show the full card.
+   - Art drawn on anything other than a black backdrop isn't keyed. For a clean figure, add a
+     transparent `<id>-sprite.png`. Set `SPRITE_KEY.mode` to `false` to turn keying off.
+2. **Trim.** Transparent margins are trimmed, so the lowest opaque pixel touches the plate and the
+   plane hugs the art.
+3. **Billboard.** A plane with `transparent: true, alphaTest: 0.1` turns on the vertical axis
    only to face the camera. That keeps it upright and grounded, unlike a screen-aligned
    `THREE.Sprite`, whose feet slide off the tile under a tilted camera.
    - It is `SPRITE_HEIGHT` (1.8) tall: the bottom is at `y = 0` and the centre at 0.9.
    - Behind it sit two silhouette layers, a white paper edge and a black ink outline.
-3. **Breathe.** Each frame, with a random phase per tower:
+4. **Breathe.** Each frame, with a random phase per tower:
    - `y = base + sin(t·3 + phase)·0.04`
    - `scale.y = 1 + sin(t·3 + phase)·0.02`, pivoting at the feet.
    - A soft ground shadow shrinks and fades as the body rises.
    - Attacks add a squash, a lean, a brief flash and a lunge toward the target.
-4. **Tweak.** `SPRITE_TWEAKS` in the manifest:
+5. **Tweak.** `SPRITE_TWEAKS` in the manifest:
    - `height`, e.g. `1.1` for a small mascot-sized figure.
    - `breath`: the bob amplitude.
    - `face: 'right' | 'left'`: the way the art faces. When set, the sprite mirrors to face its target.
+   - `key: { mode, threshold }`: per-unit keying override (e.g. a higher threshold for noisy JPEG blacks).
 
 Placing a unit also plays the **deploy cut-in**:
 - A diagonal torn band with sliced borders and speedlines.

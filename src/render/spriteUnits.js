@@ -1,9 +1,11 @@
 // 2D billboard units: a standing PNG becomes a camera-facing paper cut-out on its plate, with an
 // ink + paper border, a breathing idle, an attack squash and a soft ground shadow that breathes with it.
+// Card-style art with a black backdrop is keyed first (keyout.js) so only the figure stands up.
 // Used for units that have a sprite (or cut-in) PNG but no .glb; units with neither keep the
 // procedural figure from models.js.
 import * as THREE from 'three';
-import { SPRITE_HEIGHT, SPRITE_TWEAKS } from '../assets/manifest.js';
+import { SPRITE_HEIGHT, SPRITE_TWEAKS, SPRITE_KEY } from '../assets/manifest.js';
+import { keyOut, needsKey } from './keyout.js';
 
 /** Loaded templates by unit id: { texture, aspect, height, tw }. */
 const templates = new Map();
@@ -67,18 +69,49 @@ function trim(texture) {
   }
 }
 
+/**
+ * Card-style art (opaque edges, black backdrop) -> a keyed CanvasTexture holding only the figure.
+ * Works on a copy capped at 1024 px so the HUD keeps using the original full-res image.
+ * Returns { texture, key } (key = null when the art already had transparent margins).
+ */
+function keyCard(texture, opts) {
+  const mode = opts.mode ?? 'auto';
+  if (mode === false || mode === 'off') return { texture, key: null };
+  const img = texture.image;
+  const k = Math.min(1, 1024 / Math.max(img.width, img.height));
+  const w = Math.max(1, Math.round(img.width * k)), h = Math.max(1, Math.round(img.height * k));
+  try {
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    g.drawImage(img, 0, 0, w, h);
+    const px = g.getImageData(0, 0, w, h);
+    if (mode === 'auto' && !needsKey(px.data, w, h)) return { texture, key: null };
+    const key = keyOut(px.data, w, h, { threshold: opts.threshold ?? 18 });
+    if (!key.keyed) return { texture, key };
+    g.putImageData(px, 0, 0);
+    const keyed = new THREE.CanvasTexture(c);
+    texture.dispose();
+    return { texture: keyed, key };
+  } catch (err) {
+    console.warn('[assets] could not key sprite background; showing the full card.', err);
+    return { texture, key: null };
+  }
+}
+
 /** Load every resolved sprite URL ({ id: url|null }); failures warn and keep the procedural figure. */
 export async function loadUnitSprites(urls) {
   const loader = new THREE.TextureLoader();
   await Promise.all(Object.entries(urls).map(async ([id, url]) => {
     if (!url) return;
     try {
-      const texture = await loader.loadAsync(url);
+      const tw = SPRITE_TWEAKS[id] ?? {};
+      const { texture, key } = keyCard(await loader.loadAsync(url), { ...SPRITE_KEY, ...tw.key });
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.anisotropy = 4;
       const aspect = trim(texture);
-      const tw = SPRITE_TWEAKS[id] ?? {};
-      templates.set(id, { texture, aspect, height: tw.height ?? SPRITE_HEIGHT, tw, url });
+      templates.set(id, { texture, aspect, height: tw.height ?? SPRITE_HEIGHT, tw, url, key });
     } catch (err) {
       failures.set(id, String(err?.message || err));
       console.warn(`[assets] ${id}: could not load sprite ${url}; using the built-in figure.`, err);
@@ -93,7 +126,10 @@ export function hasUnitSprite(id) {
 
 export function spriteStatus() {
   return {
-    loaded: [...templates.entries()].map(([id, t]) => ({ id, url: t.url, height: t.height, aspect: +t.aspect.toFixed(3) })),
+    loaded: [...templates.entries()].map(([id, t]) => ({
+      id, url: t.url, height: t.height, aspect: +t.aspect.toFixed(3),
+      keyed: !!t.key?.keyed, kept: t.key?.keyed ? +t.key.kept.toFixed(3) : null,
+    })),
     failed: Object.fromEntries(failures),
   };
 }
