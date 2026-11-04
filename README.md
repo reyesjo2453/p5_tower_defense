@@ -14,6 +14,11 @@ The story campaign runs fifteen stages over three acts. Each stage is a procedur
 a time: Jester alone on a single lane first, then summons, then the rest of the cast and the second
 and third lanes.
 
+Every Phantom has an element and every Shadow a weakness. Stars from each stage buy bond scenes in
+the **Green Room**, which unlock perks and a second Persona skill. The **Playbill** replays any
+stage or scene, and a **Daily Rehearsal** offers one shared stage per day with modifiers. Add the
+page to your home screen to play full screen and offline.
+
 | | |
 | --- | --- |
 | ![Battle](docs/screenshots/02-battle.png) | ![1-MORE](docs/screenshots/03-one-more.png) |
@@ -53,6 +58,7 @@ npm run dev          # prints a "Network:" URL such as http://192.168.1.20:5173 
 | Persona summon | Tap a Persona button above the cards, then tap the runway (time slows while you aim) | `1`–`5` |
 | Next wave early | **CALL ▶** on the wave counter between waves | |
 | All-Out Attack | When the SP gauge is full, tap the flashing crimson **ALL-OUT ATTACK** prompt | `A` |
+| Pause / settings | `❚❚` opens the pause menu (resume, from the top, settings, title) | `Space` |
 | Speed / pause | `1×` and `❚❚` buttons | `Space` pauses |
 
 ## What's in it

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#0a0a0e"/>
+  <polygon points="40,330 472,170 472,300 40,460" fill="#e8002d"/>
+  <g transform="translate(256 236) rotate(-8)">
+    <path d="M-170 -10 L-70 -82 L0 -30 L70 -82 L170 -10 L70 72 L0 24 L-70 72 Z" fill="#050505" stroke="#ffffff" stroke-width="16" stroke-linejoin="round"/>
+    <ellipse cx="-66" cy="-8" rx="30" ry="15" transform="rotate(20 -66 -8)" fill="#ffe600"/>
+    <ellipse cx="66" cy="-8" rx="30" ry="15" transform="rotate(-20 66 -8)" fill="#ffe600"/>
+  </g>
+  <text x="256" y="470" font-family="Impact, Anton, sans-serif" font-size="74" fill="#ffffff" text-anchor="middle" stroke="#000" stroke-width="6" paint-order="stroke fill" letter-spacing="4">ENCORE</text>
+</svg>

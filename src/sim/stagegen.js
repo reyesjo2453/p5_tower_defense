@@ -184,14 +184,16 @@ export function generateStage({ seed = 1, lanes = 1, tier = 1 } = {}) {
 
 // ---------------------------------------------------------------- waves
 // Threat cost of each Shadow in "mannequin equivalents" (the wave budget is spent in these).
-const COST = { mannequin: 1, runner: 0.8, brute: 3.4 };
+const COST = { mannequin: 1, runner: 0.8, brute: 3.4, bouncer: 2.2, stagehand: 1.4, doppel: 1.8, critic: 1 };
+const HEAVY = new Set(['brute', 'bouncer']);
+const GAP = { brute: 5.5, bouncer: 3.5, runner: 1.2, critic: 1.1, stagehand: 2.6, doppel: 2.4 };
 
 /**
  * Compose `count` waves for a stage. power = budget of the first wave; each later wave grows by
  * `growth`. mix = which Shadow types may appear; pace scales the gaps (lower = denser);
  * boss = the last wave brings the Impresario. Groups alternate lanes so pressure is shared.
  */
-export function composeWaves({ seed = 1, lanes = ['a'], count = 3, power = 4, growth = 0.3, mix = ['mannequin'], pace = 1, boss = false }) {
+export function composeWaves({ seed = 1, lanes = ['a'], count = 3, power = 4, growth = 0.3, mix = ['mannequin'], pace = 1, boss = false, miniboss = null }) {
   const R = rng(seed * 31337 + count);
   const waves = [];
   for (let w = 0; w < count; w++) {
@@ -200,13 +202,13 @@ export function composeWaves({ seed = 1, lanes = ['a'], count = 3, power = 4, gr
     let at = 0;
     let lane = Math.floor(R() * lanes.length);
     // a brute only once the budget can carry one; runners as a fast follow-up
-    const kinds = mix.filter((t) => t !== 'brute' || budget >= 6);
+    const kinds = mix.filter((t) => !HEAVY.has(t) || budget >= 6);
     while (budget > 0.7) {
       const type = kinds.length > 1 && R() < 0.45 ? kinds[1 + Math.floor(R() * (kinds.length - 1))] : kinds[0];
       const cost = COST[type];
       const max = Math.max(1, Math.floor(budget / cost));
-      const n = Math.max(1, Math.min(max, type === 'brute' ? 1 + Math.floor(R() * 2) : 3 + Math.floor(R() * 4)));
-      const gap = (type === 'brute' ? 5.5 : type === 'runner' ? 1.2 : 2.0) * pace;
+      const n = Math.max(1, Math.min(max, HEAVY.has(type) ? 1 + Math.floor(R() * 2) : type === 'stagehand' ? 1 + Math.floor(R() * 2) : 3 + Math.floor(R() * 4)));
+      const gap = (GAP[type] ?? 2.0) * pace;
       groups.push({ type, count: n, gap, path: lanes[lane % lanes.length], at: Math.round(at * 10) / 10 });
       budget -= n * cost;
       at += n * gap * (lanes.length > 1 ? 0.45 : 0.8) + 1.5 * pace;
@@ -224,6 +226,8 @@ export function composeWaves({ seed = 1, lanes = ['a'], count = 3, power = 4, gr
       }
     }
     if (boss && w === count - 1) groups.unshift({ type: 'boss', count: 1, gap: 1, path: lanes[0], at: 4 });
+    // a mini-boss headlines the last wave of its act
+    if (miniboss && w === count - 1) groups.unshift({ type: miniboss, count: 1, gap: 1, path: lanes[lanes.length - 1], at: 6 });
     waves.push(groups);
   }
   return waves;

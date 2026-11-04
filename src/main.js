@@ -1,7 +1,7 @@
 // Entry point: renderer + scene setup, input (touch/drag/tap), game loop, cut-in orchestration.
 import * as THREE from 'three';
 import { campaignGame, rehearsalGame, classicGame } from './sim/campaign.js';
-import { UNITS, CAMPAIGN } from './sim/data.js';
+import { UNITS, CAMPAIGN, ENEMIES, ELEMENTS } from './sim/data.js';
 import { buildArena, buildLights, world } from './render/arena.js';
 import { PersonaFx } from './render/personaFx.js';
 import { createPost } from './render/post.js';
@@ -17,7 +17,8 @@ import { createAudio } from './audio/index.js';
 import { CombatText } from './render/combatText.js';
 import { StoryPlayer } from './ui/story.js';
 import { Tutor } from './ui/tutorial.js';
-import { SCENES, LOOP_LINES } from './story/script.js';
+import { SCENES, LOOP_LINES, BARKS } from './story/script.js';
+import { Menus, applySettings } from './ui/menus.js';
 import { loadSave, writeSave } from './story/save.js';
 
 const params = new URLSearchParams(location.search);
@@ -147,7 +148,15 @@ const hud = new Hud(document.getElementById('ui'), portraits, {
       return;
     }
     audio.sfx.tap();
-    if (act === 'pause') togglePause();
+    if (act === 'pause') {
+      if (state.paused) {
+        menus.close();
+        togglePause(false);
+      } else {
+        togglePause(true);
+        menus.pause();
+      }
+    }
     else if (act === 'speed') {
       state.speed = state.speed === 1 ? 2 : 1;
       hud.setSpeed(state.speed);
@@ -472,6 +481,36 @@ async function runAllOut(frame) {
 // ---------------------------------------------------------------- story + tutorial
 const uiRoot = document.getElementById('ui');
 const story = new StoryPlayer(uiRoot, portraits);
+const menus = new Menus({
+  root: uiRoot,
+  save,
+  writeSave,
+  audio,
+  playScene: (beats, id) => story.play(beats, { perf: save.perf }, id),
+  startStage: (i) => goTo({ kind: 'campaign', stage: i }),
+  startRehearsal: (spec) => goTo({ kind: 'rehearsal', ...spec }),
+  title: () => { togglePause(false); titleScreen(); },
+  resume: () => togglePause(false),
+  retry: () => { togglePause(false); newGame(mode, { scene: false }); },
+  canRetry: () => game.state === 'running' || game.state === 'ready',
+  onSettings: () => settingsChanged(),
+});
+
+/** Accessibility + speed settings into the page, the camera and the HUD. */
+function settingsChanged() {
+  applySettings(save.settings);
+  rig.calm = !!save.settings.reduceMotion;
+  if (game.state !== 'running') {
+    state.speed = save.settings.speed;
+    hud.setSpeed(state.speed);
+  }
+}
+
+/** A short line from the cast over the fight (never pauses). */
+function bark(speaker, lines) {
+  if (!storyOn || !lines?.length) return;
+  hud.bark(speaker, lines[Math.floor(Math.random() * lines.length)], portraits.cutin[speaker] ?? null);
+}
 const tutor = new Tutor(uiRoot, camera, {
   ctx: () => ({ game, state }),
   revealed: () => save.revealed,
@@ -528,10 +567,11 @@ async function enterStage({ scene: withScene = true } = {}) {
 /** Build the Game for `m` ({ kind: campaign | rehearsal | classic, stage, tier, seed }). */
 function makeGame(m) {
   let g;
-  if (m.kind === 'campaign') g = campaignGame(m.stage, { personaWhole: save.whole });
+  const extra = { difficulty: save.difficulty, bonds: save.bonds, loadout: save.loadout, known: save.known };
+  if (m.kind === 'campaign') g = campaignGame(m.stage, { personaWhole: save.whole, ...extra });
   else if (m.kind === 'rehearsal') {
-    g = rehearsalGame({ tier: m.tier, seed: m.seed, chapter: Math.max(2, save.best), unlockAll: sandbox || save.finished, personaWhole: save.whole || sandbox });
-    g.title = { label: 'REHEARSAL', title: `Tier ${ROMAN[m.tier]} · #${m.seed}` };
+    g = rehearsalGame({ ...extra, tier: m.tier, seed: m.seed, modifiers: m.modifiers ?? [], chapter: Math.max(2, save.best), unlockAll: sandbox || save.finished, personaWhole: save.whole || sandbox });
+    g.title = { label: m.daily ? 'DAILY' : 'REHEARSAL', title: `Tier ${ROMAN[m.tier]} · #${m.seed}` };
   } else {
     g = classicGame({ unlockAll: true, personaWhole: true });
     g.title = { label: 'SANDBOX', title: 'The Classic Show' };
@@ -550,9 +590,11 @@ function newGame(m = mode, { scene: withScene = true } = {}) {
   arena = buildArena(scene, game.board, { quality: quality === 'low' ? 'low' : 'high', paths: game.paths });
   view = new View(scene, fx, rig, audio.sfx, ctext);
   rig.resetView();
-  state.speed = 1;
+  state.speed = save.settings.speed ?? 1;
   state.moving = null;
-  hud.setSpeed(1);
+  hud.setSpeed(state.speed);
+  const ci = game.chapterIdx;
+  bgmMood(m.kind === 'campaign' ? (ci >= 10 ? 3 : ci >= 5 ? 2 : 1) : 1, 0.3);
   togglePause(false);
   select(null);
   rig.estGoal = 0; // glide down from the establishing shot into the battle framing
@@ -563,8 +605,11 @@ const startBtn = (label, cls = '') => `<button class="startbtn live ${cls}" styl
 
 function titleScreen() {
   rig.estGoal = 1;
+  menus.close();
+  bgmMood(0, 0.25);
   const cont = !sandbox && save.cp && CAMPAIGN[save.cp.stage];
   const rehearse = !sandbox && (save.best >= 3 || save.finished);
+  const played = !sandbox && (save.best > 0 || save.finished);
   const ov = hud.overlay(`
     <div class="logo"><div class="a">ENCORE<br>PROTOCOL</div><div class="b">PHANTOM SHOWCASE</div></div>
     <div class="howto">
@@ -573,14 +618,20 @@ function titleScreen() {
       Tonight, you're on stage.
     </div>
     <div class="titlebtns">
-      ${startBtn(cont ? 'NEW SHOW' : 'ENTER', 'new')}
       ${cont ? startBtn(`CONTINUE · ${cont.label}`, 'cont') : ''}
-      ${rehearse ? startBtn('REHEARSAL', 'reh') : ''}
+      ${startBtn(cont ? 'NEW SHOW' : 'ENTER', 'new')}
+    </div>
+    <div class="titlebtns sec">
+      ${played ? startBtn('PLAYBILL', 'pb') : ''}
+      ${played ? startBtn('GREEN ROOM', 'gr') : ''}
+      ${rehearse || sandbox ? startBtn('REHEARSAL', 'reh') : ''}
+      ${startBtn('SETTINGS', 'set')}
     </div>
     <div class="tag">Unofficial, non-commercial fan showcase inspired by the Persona series' style. Not affiliated with ATLUS or SEGA.
     Built-in models, designs, story and code are original.</div>`);
   const go = async (m, fresh = false) => {
     ov.remove();
+    menus.close();
     await assetsReady; // models are tiny next to the title screen dwell time; never place before they're in
     if (fresh) {
       // a fresh run: the story starts over, but the Prompter's performance count never resets
@@ -592,29 +643,26 @@ function titleScreen() {
     }
     newGame(m);
   };
+  goTo = go;
   // ?unlock=all / ?stage / ?rehearsal start straight into that mode (debug + smoke tests)
   const direct = startMode.kind !== 'campaign' || startMode.stage > 0;
   ov.querySelector('.new').addEventListener('click', () => (direct ? go(startMode) : go({ kind: 'campaign', stage: 0 }, true)));
   ov.querySelector('.cont')?.addEventListener('click', () => go({ kind: 'campaign', stage: save.cp.stage }));
-  ov.querySelector('.reh')?.addEventListener('click', () => tierPicker((tier) => go({ kind: 'rehearsal', tier, seed: newSeed() })));
+  ov.querySelector('.reh')?.addEventListener('click', () => { ov.remove(); menus.rehearsal(() => titleScreen(), { unlockAll: sandbox }); });
+  ov.querySelector('.pb')?.addEventListener('click', () => { ov.remove(); menus.playbill(() => titleScreen()); });
+  ov.querySelector('.gr')?.addEventListener('click', () => { ov.remove(); menus.greenRoom(() => titleScreen()); });
+  ov.querySelector('.set').addEventListener('click', () => { ov.remove(); menus.settings(() => titleScreen()); });
+}
+
+let goTo = (m) => newGame(m);
+
+/** Music: act key + how hot the moment is. */
+function bgmMood(act, intensity) {
+  audio.bgm.setAct?.(act);
+  audio.bgm.setIntensity?.(intensity);
 }
 
 const newSeed = () => 1 + Math.floor(Math.random() * 99999);
-
-/** Rehearsal tiers open up as the story goes on (all of them once it is finished). */
-function tierPicker(pick) {
-  const top = sandbox || save.finished ? 5 : Math.max(1, Math.min(5, 1 + Math.floor(save.best / 3)));
-  const lanes = ['', '1 LANE', '2 LANES', '2 LANES', '3 LANES', '3 LANES · BOSS'];
-  const ov = hud.overlay(`<div class="logo"><div class="a">REHEARSAL</div><div class="b">A NEW STAGE EVERY TIME</div></div>
-    <div class="tierpick">${[1, 2, 3, 4, 5].map((t) => `<button class="live" data-t="${t}" ${t > top ? 'disabled style="opacity:.35"' : ''}>TIER ${ROMAN[t]}<small>${lanes[t]}</small></button>`).join('')}</div>
-    ${startBtn('BACK', 'back')}`);
-  ov.querySelectorAll('[data-t]').forEach((b) => b.addEventListener('click', () => {
-    if (b.disabled) return;
-    ov.remove();
-    pick(Number(b.dataset.t));
-  }));
-  ov.querySelector('.back').addEventListener('click', () => titleScreen());
-}
 
 /** The Treasure fell: the loop resets to the top of this stage. */
 function loopReset() {
@@ -651,7 +699,7 @@ async function finale() {
     writeSave(save);
     newGame({ kind: 'campaign', stage: 0 });
   });
-  ov.querySelector('.reh').addEventListener('click', () => tierPicker((tier) => { ov.remove(); newGame({ kind: 'rehearsal', tier, seed: newSeed() }); }));
+  ov.querySelector('.reh').addEventListener('click', () => { ov.remove(); menus.rehearsal(() => titleScreen()); });
   rig.estGoal = 1;
 }
 
@@ -660,30 +708,45 @@ function stageClear() {
   cancelAim();
   arena.alert([]);
   select(null);
+  const stars = game.stars;
+  const starRow = `<div class="stars">${[1, 2, 3].map((k) => `<i class="${k <= stars ? 'on' : ''}" style="animation-delay:${0.2 + k * 0.22}s">★</i>`).join('')}</div>`;
+  bgmMood(game.chapterIdx >= 10 ? 3 : game.chapterIdx >= 5 ? 2 : 1, 0.3);
   if (mode.kind === 'campaign') {
+    const ch = CAMPAIGN[mode.stage];
+    save.stars[ch.id] = Math.max(save.stars[ch.id] ?? 0, stars);
     const next = mode.stage + 1;
     if (next >= CAMPAIGN.length) {
+      writeSave(save);
       finale();
       return;
     }
-    save.cp = { stage: next };
+    save.cp = { stage: Math.max(save.cp?.stage ?? 0, next) };
     save.best = Math.max(save.best, next);
     writeSave(save);
     hud.centerMsg('CURTAIN!', 1300);
     fx.cardsRain(60, 6);
-    const ch = CAMPAIGN[mode.stage];
     setTimeout(() => {
       const ov = hud.overlay(`<div class="logo"><div class="a">${ch.label}<br>CLEARED</div><div class="b">${ch.title.toUpperCase()} · TREASURE ${game.treasure}/${game.rules.treasureHp} · ${game.kills} SHADOWS SENT HOME</div></div>
-        ${startBtn(`NEXT · ${CAMPAIGN[next].label}`, 'next')}`);
+        ${starRow}
+        <div class="titlebtns">${startBtn(`NEXT · ${CAMPAIGN[next].label}`, 'next')}${startBtn('GREEN ROOM', 'gr')}</div>
+        <div class="titlebtns sec">${stars < 3 ? startBtn('RETRY FOR ★★★', 'again') : ''}${startBtn('TITLE', 'title')}</div>`);
       ov.querySelector('.next').addEventListener('click', () => { ov.remove(); newGame({ kind: 'campaign', stage: next }); });
+      ov.querySelector('.gr').addEventListener('click', () => { ov.remove(); menus.greenRoom(() => { menus.close(); newGame({ kind: 'campaign', stage: next }); }); });
+      ov.querySelector('.again')?.addEventListener('click', () => { ov.remove(); newGame(mode, { scene: false }); });
+      ov.querySelector('.title').addEventListener('click', () => { ov.remove(); titleScreen(); });
       rig.estGoal = 1;
     }, 1400);
     return;
   }
+  if (mode.daily) {
+    save.daily = { day: mode.day, stars: Math.max(save.daily?.day === mode.day ? save.daily.stars : 0, stars) };
+    writeSave(save);
+  }
   fx.cardsRain(140, 7);
   const ov = hud.overlay(`<div class="logo"><div class="a">TREASURE<br>SECURED</div><div class="b">${game.treasure}/${game.rules.treasureHp} · ${game.kills} SHADOWS</div></div>
-    <div class="titlebtns">${startBtn(mode.kind === 'rehearsal' ? 'NEW STAGE' : 'ENCORE', 'again')}${mode.kind === 'rehearsal' ? startBtn('TITLE', 'title') : ''}</div>`);
-  ov.querySelector('.again').addEventListener('click', () => { ov.remove(); newGame(mode.kind === 'rehearsal' ? { ...mode, seed: newSeed() } : mode); });
+    ${starRow}
+    <div class="titlebtns">${startBtn(mode.kind === 'rehearsal' ? (mode.daily ? 'AGAIN' : 'NEW STAGE') : 'ENCORE', 'again')}${mode.kind === 'rehearsal' ? startBtn('TITLE', 'title') : ''}</div>`);
+  ov.querySelector('.again').addEventListener('click', () => { ov.remove(); newGame(mode.kind === 'rehearsal' && !mode.daily ? { ...mode, seed: newSeed() } : mode); });
   ov.querySelector('.title')?.addEventListener('click', () => { ov.remove(); titleScreen(); });
   rig.estGoal = 1;
 }
@@ -707,10 +770,54 @@ function onEvents(events) {
         hud.summonCutIn(ev.unit.type, ev.persona);
         const uv = view.unitView(ev.unit);
         personaFx.summon(ev, uv?.base ?? null);
-        audio.sfx.magic?.();
+        rig.swing(new THREE.Vector3(ev.x - 5, 0.8, ev.y - 5));
+        audio.sfx.summon?.();
         post.halftone.uniforms.uAberration.value = 0.8;
+        bark(ev.unit.type, BARKS.summon[ev.unit.type === 'jester' && game.personaWhole ? 'jesterWhole' : ev.unit.type]);
         break;
       }
+      case 'spawn':
+        if (ev.named) {
+          const d = ev.enemy.def;
+          hud.centerMsg(d.name, 1800);
+          audio.sfx.boss?.();
+          rig.shake = Math.max(rig.shake, 1);
+          const key = d.boss ? 'impresario' : ev.enemy.type;
+          hud.bark(d.boss ? 'impresario' : 'audience', BARKS.boss[key]?.[0] ?? '...', null, d.name);
+        }
+        break;
+      case 'bossPhase': {
+        hud.centerMsg(ev.phase === 2 ? 'ACT TWO' : 'SCENE CHANGE', 1600);
+        audio.sfx.boss?.();
+        rig.shake = Math.max(rig.shake, 1.6);
+        post.halftone.uniforms.uFlash.value = 0.6;
+        post.halftone.uniforms.uFlashColor.value.set(0xff1a3d);
+        const lines = BARKS.boss[ev.phase === 2 ? 'phase2' : 'phase3'];
+        hud.bark('impresario', lines[Math.floor(Math.random() * lines.length)], null, 'THE IMPRESARIO');
+        break;
+      }
+      case 'reveal': {
+        const d = ENEMIES[ev.type];
+        if (!save.known.includes(ev.type)) {
+          save.known.push(ev.type);
+          writeSave(save);
+        }
+        hud.hint(`WEAKNESS FOUND · ${d.name}: weak to ${d.weak.map((k) => ELEMENTS[k].name).join(', ')}${d.resist.length ? ` · resists ${d.resist.map((k) => ELEMENTS[k].name).join(', ')}` : ''}`, 3600);
+        if (game.onStage('oracle')) bark('oracle', BARKS.reveal);
+        break;
+      }
+      case 'shield':
+        audio.sfx.clank?.();
+        break;
+      case 'hit':
+        if (ev.weak && ev.elem && !ev.dot) audio.sfx.weak?.();
+        break;
+      case 'review':
+        if (ev.units.length) hud.centerMsg('BAD REVIEW', 900);
+        break;
+      case 'allout':
+        bark('jester', BARKS.allout);
+        break;
       case 'oneMore':
         playOneMore(ev.unit, ev.chain, ev.baton);
         break;
@@ -818,6 +925,14 @@ function loop() {
   if (u.uFlash.value <= 0) u.uFlashColor.value.set(0xffffff);
   post.render(dt, t);
   hud.update(game, { aiming: state.aiming });
+  // music: hotter the closer the Shadows get, calm during scenes and menus
+  if (story.playing || menus.isOpen || game.state !== 'running') audio.bgm.setIntensity?.(story.playing ? 0.15 : 0.3);
+  else {
+    let heat = Math.min(1, game.enemies.length / 12) * 0.5;
+    for (const e of game.enemies) heat = Math.max(heat, 0.3 + 0.7 * (e.walked / (game.pathLen[e.path].at(-1) || 1)));
+    if (game.enemies.some((e) => e.def.boss || e.def.miniboss)) heat = Math.max(heat, 0.85);
+    audio.bgm.setIntensity?.(heat);
+  }
   tutor.update();
   if (state.freezeReq) {
     state.freezeReq = false;
@@ -829,9 +944,14 @@ function loop() {
   requestAnimationFrame(loop);
 }
 
+settingsChanged();
+// install-to-home-screen + offline play (production builds only; dev keeps hot reload clean)
+if (import.meta.env.PROD && 'serviceWorker' in navigator && location.protocol !== 'file:') {
+  navigator.serviceWorker.register('./sw.js').catch(() => {});
+}
 titleScreen();
 resize();
 requestAnimationFrame(loop);
 
 // debug / smoke-test handle
-window.__game = { get game() { return game; }, get mode() { return mode; }, get arena() { return arena; }, state, hud, audio, get view() { return view; }, rig, post, fx, personaFx, scene, palace, assets, assetsReady, newGame, requestAllOut, select, ctext, story, tutor, save, startAim, trySummon };
+window.__game = { menus, get game() { return game; }, get mode() { return mode; }, get arena() { return arena; }, state, hud, audio, get view() { return view; }, rig, post, fx, personaFx, scene, palace, assets, assetsReady, newGame, requestAllOut, select, ctext, story, tutor, save, startAim, trySummon };

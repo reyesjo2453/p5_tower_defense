@@ -4,7 +4,7 @@ import { Game } from '../src/sim/game.js';
 import { buildBoard, expand } from '../src/sim/board.js';
 import { PATHS, UNITS, ENEMIES, WAVES, CENTER, CAMPAIGN } from '../src/sim/data.js';
 import { generateStage } from '../src/sim/stagegen.js';
-import { campaignGame, rehearsalGame, classicGame } from '../src/sim/campaign.js';
+import { campaignGame, rehearsalGame, classicGame, dailySpec } from '../src/sim/campaign.js';
 import { autoplay, bestSlot } from './bot.js';
 
 const run = (g, secs, dt = 1 / 30) => { for (let t = 0; t < secs; t += dt) g.update(dt); };
@@ -434,4 +434,104 @@ test('hit events flag crits (DOWN bonus) and weakness (marked posture)', () => {
   e.down = 1;
   g.damage(null, e, 1, 0);
   assert.ok(g.drain().find((x) => x.t === 'hit').crit);
+});
+
+// ---------------------------------------------------------------- v4: affinities, new Shadows, meta
+test('affinities: weak hits hurt more, break posture faster and reveal the type; resists halve', () => {
+  const g = open(classicGame({ unlockAll: true }));
+  g.cash = 999;
+  const j = g.place('jester', 1, 1); // slash
+  const q = g.place('queen', 2, 1); // strike
+  const m = g.spawn('mannequin', 'a'); // weak to slash
+  const hp = m.hp;
+  g.damage(j, m, 10, 10);
+  assert.equal(hp - m.hp, 15);
+  assert.equal(m.maxPosture - m.posture, 20);
+  assert.ok(g.known.has('mannequin'), 'a weak hit reveals the affinities');
+  assert.ok(g.drain().some((x) => x.t === 'hit' && x.weak && x.elem === 'slash'));
+  const r = g.spawn('runner', 'a'); // resists strike
+  const rh = r.hp;
+  g.damage(q, r, 10, 10);
+  assert.equal(rh - r.hp, 5);
+  assert.ok(!g.known.has('runner'), 'a resisted hit does not reveal');
+  const blind = open(classicGame({ unlockAll: true, blind: true }));
+  blind.reveal('runner');
+  assert.ok(!blind.known.has('runner'), 'House Lights Down keeps weaknesses hidden');
+});
+
+test('new Shadows: shields need weak hits, stagehands heal, doppels split, the Reviewer pans', () => {
+  const g = open(classicGame({ unlockAll: true }));
+  g.cash = 999;
+  const j = g.place('jester', 1, 1);
+  const q = g.place('queen', 2, 1);
+  const b = g.spawn('bouncer', 'a'); // weak to strike, 3 shield
+  g.damage(j, b, 10, 50);
+  assert.ok(b.maxPosture - b.posture <= 10 + 1e-9, 'shield soaks posture from non-weak hits');
+  for (let i = 0; i < 3; i++) g.damage(q, b, 1, 1);
+  assert.equal(b.shield, 0, 'three weak hits strip it');
+  const s = g.spawn('stagehand', 'a');
+  const hurt = g.spawn('mannequin', 'a');
+  hurt.hp = 10;
+  g.enemyAbilities(s, ENEMIES.stagehand.heal.every + 0.01);
+  assert.ok(hurt.hp > 10, 'stagehand patched its friend');
+  const d = g.spawn('doppel', 'a');
+  g.pushBack(d, -4);
+  const n = g.enemies.length;
+  g.damage(null, d, 1e6, 0, { raw: true });
+  assert.equal(g.enemies.length, n - 1 + 2, 'doppel splits into two');
+  assert.ok(g.enemies.slice(-2).every((x) => x.type === 'runner' && x.walked > 3), 'halves start where it fell');
+  const rv = g.spawn('reviewer', 'a');
+  rv.x = 1; rv.y = 2;
+  g.enemyAbilities(rv, ENEMIES.reviewer.review.every + 0.01);
+  assert.ok(j.buffs.some((x) => x.key === 'review') && g.stat(j).interval > UNITS.jester.interval, 'bad review slows Phantoms nearby');
+});
+
+test('mini-bosses headline their act; the Impresario changes the scene at 66% and 33%', () => {
+  assert.ok(campaignGame(4).waves.at(-1).some((x) => x.type === 'usher'));
+  assert.ok(campaignGame(9).waves.at(-1).some((x) => x.type === 'reviewer'));
+  const g = open(campaignGame(14, { personaWhole: true }));
+  const boss = g.spawn('boss', 'a');
+  g.pushBack(boss, -6);
+  g.sp = 80;
+  const queued = g.spawnQueue.length;
+  g.damage(null, boss, boss.maxHp * 0.4, 0, { raw: true });
+  assert.equal(boss.phase, 1);
+  assert.ok(g.spawnQueue.length > queued, 'phase 2 calls critics down the other runways');
+  const w = boss.walked;
+  g.damage(null, boss, boss.maxHp * 0.3, 0, { raw: true });
+  assert.equal(boss.phase, 2);
+  assert.ok(boss.walked < w, 'phase 3: scene change, it steps back up the runway');
+  assert.equal(g.sp, 80 - g.rules.bossSpSteal, 'and steals SP');
+  assert.ok(g.drain().filter((x) => x.t === 'bossPhase').length === 2);
+});
+
+test('difficulty, stars, bond perks and the second Persona skill', () => {
+  const easy = campaignGame(5, { difficulty: 'story' });
+  const hard = campaignGame(5, { difficulty: 'hard' });
+  assert.ok(easy.rules.treasureHp > hard.rules.treasureHp && easy.hp < hard.hp && easy.rules.startCash > hard.rules.startCash);
+  const g = campaignGame(0);
+  assert.equal(autoplay(g), 'won');
+  assert.ok(g.stars >= 1 && g.stars <= 3);
+  // bonds: VETERAN deploys Queen at Rank 2; SAFETY NET adds 3 Treasure HP
+  const b = open(campaignGame(14, { bonds: { queen: 1, prompter: 1, oracle: 2 }, loadout: { oracle: 'B', queen: 'B' } }));
+  assert.equal(b.rules.treasureHp, 23);
+  b.cash = 9999;
+  assert.equal(b.place('queen', ...slotOf(b)).rank, 2);
+  assert.equal(b.persona(b.onStage('queen')).kind, 'verdict', 'loadout B needs bond 2');
+  b.place('oracle', ...slotOf(b));
+  assert.equal(b.persona(b.onStage('oracle')).kind, 'overclock');
+  b.sp = 99;
+  assert.ok(b.summon('oracle', 5, 5));
+  assert.ok(b.units.every((u) => u.buffs.some((x) => x.key === 'overclock')), 'OVERCLOCK quickens everyone');
+});
+
+test('daily rehearsal: one spec per day, two modifiers that change the rules', () => {
+  const a = dailySpec(new Date(2026, 10, 4));
+  assert.deepEqual(a, dailySpec(new Date(2026, 10, 4)));
+  assert.notDeepEqual(a.seed, dailySpec(new Date(2026, 10, 5)).seed);
+  assert.equal(a.modifiers.length, 2);
+  assert.notEqual(a.modifiers[0], a.modifiers[1]);
+  const glass = rehearsalGame({ tier: 2, seed: 3, unlockAll: true, modifiers: ['glass', 'noranks'] });
+  assert.equal(glass.rules.treasureHp, 10);
+  assert.ok(!glass.mech.has('rank'));
 });

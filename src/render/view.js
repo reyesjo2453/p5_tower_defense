@@ -7,6 +7,7 @@ import { instantiateUnit } from './gltfUnits.js';
 import { instantiateSprite, ATTACK } from './spriteUnits.js';
 import { CombatEffects, threatRing } from './combatEffects.js';
 import { world, RUNWAY_H, SLOT_H } from './arena.js';
+import { ELEMENTS } from '../sim/data.js';
 
 const DUTCH = THREE.MathUtils.degToRad(-6); // resting Dutch roll
 const PUNCH_DUTCH = THREE.MathUtils.degToRad(-8); // roll while a strike punch-in holds
@@ -31,6 +32,8 @@ function spring(x, v, goal, k, c, dt) {
   v += a * dt;
   return [x + v * dt, v];
 }
+
+const UP = new THREE.Vector3(0, 1, 0);
 
 export class CameraRig {
   constructor(camera) {
@@ -69,6 +72,21 @@ export class CameraRig {
     this.kickDir = new THREE.Vector3();
     this.kickAmt = 0;
     this.kickT = KICK_T;
+    // cinematic swing (Persona summons): orbit around the action and dip low, then come back
+    this.swingT = 1;
+    this.swingDur = 1;
+    this.swingSide = 1;
+    this._off = new THREE.Vector3();
+    this.calm = false; // reduce-motion setting: no shake, no swings
+  }
+
+  /** Summon camera: punch toward p while orbiting ~30 deg and dropping toward the floor. */
+  swing(p, dur = 1.6) {
+    if (this.calm) return;
+    this.punch(p, 0.62, dur * 0.7);
+    this.swingT = 0;
+    this.swingDur = dur;
+    this.swingSide = p.x >= 0 ? -1 : 1;
   }
 
   /** Multiply the player zoom goal (<1 = closer); clamped to [ZOOM_MIN, ZOOM_MAX]. */
@@ -227,6 +245,15 @@ export class CameraRig {
       this.camera.position.addScaledVector(this.kickDir, off);
       look.addScaledVector(this.kickDir, off);
     }
+    if (this.swingT < 1) {
+      this.swingT = Math.min(1, this.swingT + dt / this.swingDur);
+      const k = Math.sin(Math.PI * this.swingT); // out and back
+      const off = this._off.copy(this.camera.position).sub(look);
+      off.applyAxisAngle(UP, this.swingSide * 0.55 * k);
+      off.y *= 1 - 0.35 * k;
+      this.camera.position.copy(look).add(off);
+    }
+    if (this.calm) this.shake = 0;
     if (this.shake > 0) {
       this.shake = Math.max(0, this.shake - dt * 3);
       const s = this.shake * 0.25;
@@ -295,7 +322,17 @@ export class View {
     this.rig = rig;
     this.units = new Map();
     this.enemies = new Map();
+    this.corpses = []; // dying Shadows playing their fall
     this.time = 0;
+    this.known = null; // game.known (affinities to show)
+    this.tagLayer = null;
+    if (text?.layer) {
+      // affinity tags over each Shadow's bars (DOM, projected each frame)
+      this.tagLayer = document.createElement('div');
+      this.tagLayer.className = 'afflayer';
+      text.layer.parentElement.appendChild(this.tagLayer);
+    }
+    this._tv = new THREE.Vector3();
   }
 
   addUnit(u) {
@@ -335,13 +372,21 @@ export class View {
   }
 
   addEnemy(e) {
-    const model = buildShadow(e.def.boss ? 'boss' : e.type === 'brute' ? 'brute' : 'mannequin');
+    const model = buildShadow(e.def.boss ? 'boss' : e.type);
     model.root.scale.setScalar(e.def.scale * 0.85);
     model.root.position.copy(world(e.x, e.y, RUNWAY_H));
     this.scene.add(model.root);
-    const bars = makeBars(e.def.boss ? 1.4 : 0.7);
+    const bars = makeBars(e.def.boss || e.def.miniboss ? 1.4 : 0.7);
     this.scene.add(bars.group);
-    this.enemies.set(e.uid, { e, model, bars, hitT: 0, maskOff: false, phase: Math.random() * 6, lastWalk: 0, freeze: 0, callT: 0, dying: 0 });
+    let tag = null;
+    if (this.tagLayer) {
+      tag = document.createElement('div');
+      tag.className = 'aff';
+      this.tagLayer.appendChild(tag);
+    }
+    // spawn-in: rises out of the floor in a puff of ink
+    this.fx.inkBurst(model.root.position.clone().setY(0.3), e.def.boss || e.def.miniboss ? 40 : 10);
+    this.enemies.set(e.uid, { e, model, bars, tag, tagKey: '', hitT: 0, maskOff: false, phase: Math.random() * 6, lastWalk: 0, freeze: 0, callT: 0, dying: 0, rise: 0, knock: new THREE.Vector3(), knockT: 0 });
   }
 
   removeEnemy(e, kind = 'kill') {
@@ -350,9 +395,39 @@ export class View {
     const p = v.model.root.position.clone().setY(0.8 * e.def.scale);
     if (kind === 'kill') this.fx.inkBurst(p, e.def.boss ? 80 : 26);
     this.combat.restore(v.model.root);
-    this.scene.remove(v.model.root);
     this.scene.remove(v.bars.group);
+    v.tag?.remove();
     this.enemies.delete(e.uid);
+    if (kind === 'kill') {
+      // death: thrown back off its feet, the mask pops loose and spins away, then it sinks into ink
+      const away = v.knock.lengthSq() > 1e-6 ? v.knock.clone().normalize() : new THREE.Vector3(-e.dirX, 0, -e.dirY);
+      v.model.parts.mask.visible = true;
+      this.corpses.push({ v, t: 0, away, spin: (Math.random() - 0.5) * 8, maskV: new THREE.Vector3(away.x * 1.2, 2.6, away.z * 1.2) });
+    } else this.scene.remove(v.model.root);
+  }
+
+  /** Dying Shadows: fall back, mask flies, sink + shrink (0.55 s). */
+  updateCorpses(dt) {
+    for (const c of [...this.corpses]) {
+      c.t += dt;
+      const k = Math.min(1, c.t / 0.55);
+      const { root, parts } = c.v.model;
+      parts.body.rotation.x = -1.35 * (1 - (1 - k) * (1 - k));
+      root.position.addScaledVector(c.away, dt * 1.6 * (1 - k));
+      root.position.y = RUNWAY_H - k * k * 0.6;
+      const s0 = c.v.e.def.scale * 0.85;
+      root.scale.setScalar(s0 * (1 - k * k * 0.9));
+      // the mask: thrown up and spinning
+      const m = parts.mask;
+      m.position.addScaledVector(c.maskV, dt);
+      c.maskV.y -= dt * 9;
+      m.rotation.z += c.spin * dt;
+      m.rotation.x += c.spin * 0.6 * dt;
+      if (k >= 1) {
+        this.scene.remove(root);
+        this.corpses.splice(this.corpses.indexOf(c), 1);
+      }
+    }
   }
 
   unitView(u) {
@@ -445,9 +520,56 @@ export class View {
         }
         break;
       }
+      case 'summon': {
+        const v = this.units.get(ev.unit.uid);
+        if (v) {
+          v.model.playCast?.();
+          this.fx.ring(v.base.clone().setY(0.1), 0x8fd0ff, 2, 0.5);
+          v.castT = 1.1;
+        }
+        break;
+      }
+      case 'enemyHeal': {
+        const v = this.enemies.get(ev.enemy.uid);
+        if (v) this.fx.ring(v.model.root.position.clone().setY(0.2), 0x39ff88, 3.6, 0.5);
+        for (const o of ev.healed) {
+          const ov = this.enemies.get(o.uid);
+          if (ov) this.fx.burstSparks(ov.model.root.position.clone().setY(1), 6, new THREE.Color(0x39ff88));
+        }
+        break;
+      }
+      case 'review': {
+        const v = this.enemies.get(ev.enemy.uid);
+        if (v) this.fx.ring(v.model.root.position.clone().setY(0.2), 0x6f7bff, 4.8, 0.6);
+        for (const u of ev.units) {
+          const uv = this.units.get(u.uid);
+          if (uv) this.text?.callout(uv.base.clone().setY(2), 'BOO!');
+        }
+        break;
+      }
+      case 'shield': {
+        const v = this.enemies.get(ev.enemy.uid);
+        if (v && ev.left === 0 && v.model.parts.shield) {
+          v.model.parts.shield.visible = false;
+          this.fx.shatter(v.model.root.position.clone().setY(0.9));
+          this.text?.callout(v.model.root.position.clone().setY(2), 'SHIELD BREAK!');
+        }
+        break;
+      }
+      case 'bossPhase': {
+        const v = this.enemies.get(ev.enemy.uid);
+        if (v) {
+          this.fx.ring(v.model.root.position.clone().setY(0.2), 0xff1a3d, 6, 0.8);
+          this.fx.inkBurst(v.model.root.position.clone().setY(1.2), 60);
+          v.model.parts.mask.visible = true;
+          v.maskOff = false;
+        }
+        break;
+      }
       case 'baton': {
         const v = this.units.get(ev.to.uid);
         if (v) {
+          v.model.playHop?.();
           this.rig.punch(v.base.clone().setY(0.4), 0.55, 1.3);
           this.fx.ring(v.base.clone().setY(0.15), 0xff2a6a, 2.5, 0.5);
           this.fx.burstSparks(v.base.clone().setY(1), 20, new THREE.Color(0xff6a9a));
@@ -481,6 +603,14 @@ export class View {
     const v = this.enemies.get(ev.enemy.uid);
     if (!v) return;
     v.hitT = 1;
+    // knockback: slide a little away from the attacker and rock back
+    const uv = ev.unit && this.units.get(ev.unit.uid);
+    if (uv && !ev.dot) {
+      v.knock.copy(v.model.root.position).sub(uv.base).setY(0);
+      if (v.knock.lengthSq() > 1e-6) v.knock.normalize().multiplyScalar(ev.weak ? 0.22 : ev.crit ? 0.18 : 0.1);
+      v.knockT = 1;
+    }
+    if (ev.shieldHit) this.fx.burstSparks(v.model.root.position.clone().setY(0.9), 10, new THREE.Color(0x8fd0ff));
     this.combat.flash(v.model.root);
     this.stats.flashes++;
     if (stop > 0) {
@@ -512,6 +642,12 @@ export class View {
     }
     if (!RANGED.has(h.type)) this.rig.kick?.(v.atkDir, KICK);
     this.strikeFx(v, h.type, h.hitP, h.angle, true);
+    if (v.model.finisher) {
+      // the leaping third strike: a bigger burst and a thump
+      this.fx.comicBurst(h.hitP.clone().setY(h.hitP.y + 0.2), RANGED.has(h.type) ? 'tech' : 'punch', 1.25);
+      this.fx.dust(h.hitP.clone().setY(RUNWAY_H + 0.04), 2.2, 0.3);
+      this.rig.shake = Math.max(this.rig.shake ?? 0, 0.45);
+    }
   }
 
   /** Each Phantom's signature strike at the contact point (+ its SFX). `burst` adds the comic star. */
@@ -589,8 +725,36 @@ export class View {
     }
   }
 
+  /** Affinity tag over a Shadow: weak / resist icons once known (else ?), shield pips. */
+  placeTag(v, game, p) {
+    const e = v.e;
+    const known = game.known.has(e.type);
+    const key = `${known}|${e.shield}`;
+    if (key !== v.tagKey) {
+      v.tagKey = key;
+      const d = e.def;
+      let html = known
+        ? d.weak.map((k) => `<i class="w" style="--c:${ELEMENTS[k].color}">${ELEMENTS[k].icon}</i>`).join('') + d.resist.map((k) => `<i class="r" style="--c:${ELEMENTS[k].color}">${ELEMENTS[k].icon}</i>`).join('')
+        : '<i class="q">?</i>';
+      if (e.shield > 0) html += `<i class="sh">🛡${e.shield}</i>`;
+      v.tag.innerHTML = html;
+    }
+    const s = this._tv.copy(p).setY(p.y + 0.16).project(this.rig.camera);
+    if (s.z > 1) {
+      v.tag.style.display = 'none';
+      return;
+    }
+    v.tag.style.display = '';
+    const w = this.tagLayer.clientWidth || innerWidth;
+    const h = this.tagLayer.clientHeight || innerHeight;
+    v.tag.style.transform = `translate3d(${(((s.x + 1) / 2) * w).toFixed(1)}px, ${(((1 - s.y) / 2) * h).toFixed(1)}px, 0) translate(-50%, -100%)`;
+  }
+
   /** Remove every remaining figure (new game). */
   clear() {
+    for (const c of this.corpses) this.scene.remove(c.v.model.root);
+    this.corpses = [];
+    this.tagLayer?.remove();
     for (const v of [...this.units.values()]) this.removeUnit(v.u);
     for (const v of [...this.enemies.values()]) this.removeEnemy(v.e, 'leak');
     this.text?.clear();
@@ -705,13 +869,31 @@ export class View {
         root.position.z += (e.y - 5 - root.position.z) * k;
         root.position.y = RUNWAY_H + Math.sin(Math.max(0, v.slide) / 0.35 * Math.PI) * 0.5;
       } else root.position.set(e.x - 5, RUNWAY_H, e.y - 5);
+      // knockback offset (decays) and spawn rise
+      if (v.knockT > 0) {
+        v.knockT = Math.max(0, v.knockT - dt * 5);
+        root.position.addScaledVector(v.knock, v.knockT * v.knockT);
+      }
+      if (v.rise < 1) {
+        v.rise = Math.min(1, v.rise + dt * 2.5);
+        root.position.y -= (1 - v.rise) * (1 - v.rise) * 1.2;
+      }
       const want = Math.atan2(e.dirX, e.dirY);
       let dy = want - root.rotation.y;
       dy = Math.atan2(Math.sin(dy), Math.cos(dy));
       root.rotation.y += dy * Math.min(1, dt * 8);
       const P = model.parts;
-      const stride = e.walked * 5.2 + v.phase;
-      if (e.down > 0) {
+      // gait by type: runners / critics sprint leaning forward, heavies stomp, bosses sway
+      const fast = e.type === 'runner' || e.type === 'critic';
+      const big = e.def.boss || e.def.miniboss || e.type === 'brute' || e.type === 'bouncer';
+      const stride = e.walked * (fast ? 4.2 : big ? 3.6 : 5.2) + v.phase;
+      if (e.stun > 0 && e.down <= 0) {
+        // dazed: stand still, head rolling
+        P.body.rotation.x += (0.05 - P.body.rotation.x) * Math.min(1, dt * 8);
+        P.head.rotation.z = Math.sin(t * 9) * 0.3;
+        P.head.rotation.x = Math.cos(t * 9) * 0.15;
+        P.arms.forEach((a, i) => { a.rotation.x = 0.2 + Math.sin(t * 5 + i) * 0.15; });
+      } else if (e.down > 0) {
         // broken: buckle to a kneel, sway
         P.body.rotation.x += (0.55 - P.body.rotation.x) * Math.min(1, dt * 12);
         P.body.position.y += (-0.25 - P.body.position.y) * Math.min(1, dt * 12);
@@ -720,13 +902,18 @@ export class View {
         P.arms.forEach((a, i) => { a.rotation.x = 0.4 + Math.sin(t * 6 + i) * 0.1; });
         P.head.rotation.z = Math.sin(t * 7) * 0.12;
       } else {
-        P.body.rotation.x += (0.08 - P.body.rotation.x) * Math.min(1, dt * 8);
-        P.body.position.y = Math.abs(Math.sin(stride)) * 0.05;
-        P.legs[0].rotation.x = Math.sin(stride) * 0.7;
-        P.legs[1].rotation.x = -Math.sin(stride) * 0.7;
-        P.arms[0].rotation.x = -Math.sin(stride) * 0.5;
-        P.arms[1].rotation.x = Math.sin(stride) * 0.5;
-        P.head.rotation.z = 0;
+        const leanF = fast ? 0.32 : big ? 0.04 : 0.08;
+        const hitBack = v.knockT * 0.45; // flinch backward when struck
+        P.body.rotation.x += (leanF - hitBack - P.body.rotation.x) * Math.min(1, dt * 10);
+        P.body.position.y = Math.abs(Math.sin(stride)) * (big ? 0.08 : 0.05);
+        const swing = fast ? 0.95 : big ? 0.5 : 0.7;
+        P.legs[0].rotation.x = Math.sin(stride) * swing;
+        P.legs[1].rotation.x = -Math.sin(stride) * swing;
+        P.arms[0].rotation.x = -Math.sin(stride) * swing * (fast ? 1.1 : 0.7);
+        P.arms[1].rotation.x = Math.sin(stride) * swing * (fast ? 1.1 : 0.7);
+        P.head.rotation.z = big ? Math.sin(stride * 0.5) * 0.08 : 0;
+        P.head.rotation.x = 0;
+        if (P.glow) P.glow.scale.setScalar(1 + Math.sin(t * 6) * 0.1);
       }
       // glowing eyes flicker; marked enemies get green-tinted eyes
       for (const eye of P.eyes) eye.scale.y = 0.6 + Math.abs(Math.sin(t * 9 + v.phase)) * 0.6;
@@ -741,6 +928,8 @@ export class View {
       bars.posture.scale.x = Math.max(0.0001, bars.width * Math.max(0, e.posture / e.maxPosture));
       bars.posture.material.color.setHex(e.down > 0 ? 0xffffff : e.mark > 0 ? 0x39ff88 : 0xffd400);
       if (e.down > 0) bars.posture.scale.x = bars.width * (e.down / game.rules.downTime);
+      if (v.tag) this.placeTag(v, game, bars.group.position);
     }
+    this.updateCorpses(dt);
   }
 }

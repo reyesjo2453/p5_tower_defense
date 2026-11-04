@@ -178,6 +178,75 @@ export class SfxManager {
     }
   }
 
+  /** Persona summon: a rising choir-like swell (detuned saws through a sweeping low-pass) + a gong. */
+  summon() {
+    const t = this.gate('summon');
+    if (t < 0) return;
+    const c = this.ctx;
+    const lp = c.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.Q.value = 6;
+    lp.frequency.setValueAtTime(300, t);
+    lp.frequency.exponentialRampToValueAtTime(5200, t + 0.45);
+    const g = this.gain(t, 0.32, 0.25, 0.9);
+    lp.connect(g);
+    for (const f of [146.8, 220, 293.7, 349.2]) {
+      for (const d of [-6, 6]) {
+        const o = this.osc('sawtooth', f, t);
+        o.detune.value = d;
+        o.connect(lp);
+        this.voice(o, t + 1.25);
+      }
+    }
+    const gong = this.osc('sine', 98, t + 0.32);
+    gong.frequency.exponentialRampToValueAtTime(70, t + 1.6);
+    gong.connect(this.gain(t + 0.32, 0.7, 0.004, 1.4));
+    this.voice(gong, t + 1.8);
+  }
+
+  /** Weakness hit: a bright two-note ping. */
+  weak() {
+    const t = this.gate('weak');
+    if (t < 0) return;
+    [[1319, 0], [1976, 0.06]].forEach(([f, dt]) => {
+      const o = this.osc('triangle', f, t + dt);
+      o.connect(this.gain(t + dt, 0.22, 0.002, 0.18));
+      this.voice(o, t + dt + 0.22);
+    });
+  }
+
+  /** Shield chip: a metallic clank (inharmonic square partials). */
+  clank() {
+    const t = this.gate('clank');
+    if (t < 0) return;
+    for (const f of [523, 1187, 1741]) {
+      const o = this.osc('square', f, t);
+      o.connect(this.gain(t, 0.08, 0.001, 0.12));
+      this.voice(o, t + 0.15);
+    }
+  }
+
+  /** A boss or mini-boss walks on, or the Impresario changes the scene: a low brass hit + rumble. */
+  boss() {
+    const t = this.gate('boss');
+    if (t < 0) return;
+    const c = this.ctx;
+    for (const f of [55, 82.4, 110]) {
+      const o = this.osc('sawtooth', f, t);
+      const lp = c.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 700;
+      o.connect(lp).connect(this.gain(t, 0.22, 0.03, 1.1));
+      this.voice(o, t + 1.2);
+    }
+    const n = this.noiseSrc(t);
+    const lp = c.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 220;
+    n.connect(lp).connect(this.gain(t, 0.5, 0.05, 1.2));
+    this.voice(n, t + 1.3);
+  }
+
   status() {
     return { ready: !!this.bus, muted: this.muted, volume: this.volume, played: this.played, voices: this.voices };
   }
