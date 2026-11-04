@@ -46,6 +46,19 @@ export class BgmManager {
     this.timer = null;
     this.step = 0;                 // absolute 16th counter
     this.nextTime = 0;
+    this.intensity = 0.4;          // 0 = calm (scenes, menus) .. 1 = a crowd at the Treasure
+    this.target = 0.4;
+    this.transpose = 0;            // per act: the same groove in a new key
+  }
+
+  /** Act I / II / III of the story: the groove moves key (and loses its brightness in Act III). */
+  setAct(n) {
+    this.transpose = [0, 0, -2, -5][Math.max(0, Math.min(3, n))];
+  }
+
+  /** How hot the stage is right now (eases there over a bar or so). */
+  setIntensity(v) {
+    this.target = Math.max(0, Math.min(1, v));
   }
 
   /** Optional streamed track (resolved from the build-time asset index; null = procedural). */
@@ -189,6 +202,9 @@ export class BgmManager {
   }
 
   playStep(n, t) {
+    this.intensity += (this.target - this.intensity) * 0.02;
+    const I = this.intensity;
+    const tr = this.transpose;
     const s = n % 16;
     const bar = Math.floor(n / 16);
     const chord = CHORDS[bar % 4];
@@ -197,21 +213,24 @@ export class BgmManager {
     const phrase = Math.floor(bar / 8);
 
     // --- drums
-    if (KICK[bar % 2].includes(s)) this.kick(t, s === 0 ? 1 : 0.8);
-    if (s === 4 || s === 12) this.snare(t, 1);
-    else if ((s === 7 || s === 15) && bar % 2) this.snare(t, 0.18); // ghost notes
-    if (bar % 8 === 7 && s >= 13) this.snare(t, 0.35 + (s - 13) * 0.2); // fill into the top
+    // calm: kick on the one and the snare backbeat only; hot: four on the floor, busier hats
+    const drums = 0.45 + I * 0.55;
+    if (KICK[bar % 2].includes(s) && (I > 0.25 || s === 0)) this.kick(t, (s === 0 ? 1 : 0.8) * drums);
+    else if (I > 0.8 && s % 4 === 0) this.kick(t, 0.55);
+    if (s === 4 || s === 12) this.snare(t, I > 0.15 ? drums : 0.4);
+    else if ((s === 7 || s === 15) && (bar % 2 || I > 0.7)) this.snare(t, 0.18); // ghost notes
+    if (bar % 8 === 7 && s >= 13 && I > 0.3) this.snare(t, 0.35 + (s - 13) * 0.2); // fill into the top
     const open = s === 14 && bar % 2 === 1;
-    this.hat(t, open ? 0.5 : s % 4 === 2 ? 0.55 : s % 2 ? 0.22 : 0.38, open);
+    if (I > 0.2 || s % 4 === 2) this.hat(t, (open ? 0.5 : s % 4 === 2 ? 0.55 : s % 2 ? 0.22 : 0.38) * (0.6 + I * 0.4), open);
 
     // --- bass: syncopated walking funk line, sliding into the next chord on the last note
     const line = BASS[(bar + half) % 2];
     const hit = line.find(([st]) => st === s);
     if (hit) {
       const deg = hit[1];
-      const note = deg === 'o' ? chord.root + 12 : chord.scale[deg];
+      const note = (deg === 'o' ? chord.root + 12 : chord.scale[deg]) + tr;
       const last = hit === line[line.length - 1];
-      const slideTo = last ? next.root + (next.root < chord.root - 5 ? 12 : 0) : null;
+      const slideTo = last ? next.root + tr + (next.root < chord.root - 5 ? 12 : 0) : null;
       const len = last ? 2 : (line[line.indexOf(hit) + 1]?.[0] ?? 16) - s;
       this.bassNote(t, note, Math.min(len, 3) * STEP * 0.92, slideTo);
     }
@@ -220,19 +239,19 @@ export class BgmManager {
     const comp = COMP[(bar + phrase) % 2].find(([st]) => st === s);
     if (comp) {
       const vel = s === 0 ? 0.9 : 0.65;
-      chord.keys.forEach((m, i) => this.rhodes(t + i * 0.006, m, comp[1] * STEP, vel));
+      chord.keys.forEach((m, i) => this.rhodes(t + i * 0.006, m + tr, comp[1] * STEP, vel));
     }
 
     // --- brass stabs: punch the downbeat of every 4th bar, anticipate the turnaround
-    if ((bar % 4 === 0 && s === 0 && half) || (bar % 4 === 3 && s === 14)) {
+    if (I > 0.45 && ((bar % 4 === 0 && s === 0 && (half || I > 0.75)) || (bar % 4 === 3 && s === 14))) {
       const tgt = s === 14 ? next : chord;
-      this.stab(t, tgt.keys.slice(-3).map((m) => m + 12), s === 14 ? 0.18 : 0.26);
+      this.stab(t, tgt.keys.slice(-3).map((m) => m + 12 + tr), s === 14 ? 0.18 : 0.26);
     }
 
     // --- vibraphone chimes accenting downbeats
-    if (s === 0 && bar % 2 === 1) this.vibe(t, VIBE[(bar * 3 + phrase) % VIBE.length], 0.8);
-    if (s === 3 && bar % 4 === 1) this.vibe(t, VIBE[(bar * 5 + 2) % VIBE.length], 0.5);
-    if (s === 8 && bar % 8 === 6) [0, 2, 4].forEach((k, i) => this.vibe(t + i * STEP, VIBE[(k + phrase) % VIBE.length], 0.5));
+    if (s === 0 && bar % 2 === 1) this.vibe(t, VIBE[(bar * 3 + phrase) % VIBE.length] + tr, 0.8);
+    if (s === 3 && bar % 4 === 1) this.vibe(t, VIBE[(bar * 5 + 2) % VIBE.length] + tr, 0.5);
+    if (s === 8 && bar % 8 === 6) [0, 2, 4].forEach((k, i) => this.vibe(t + i * STEP, VIBE[(k + phrase) % VIBE.length] + tr, 0.5));
   }
 
   env(g, t, peak, a, d, sustain = 0) {

@@ -51,6 +51,19 @@ up. The cognitive theater behind the stream is the Encore Palace.
 | Prompter | GHOSTLIGHT | a lantern cage with a flame for a mouth | patches and wards the Treasure |
 | Limelight | FLASHPAPER | a crown of flame | Wall of Fire: a burning ring that lingers |
 
+## Green Room bond scenes (optional, paid in stars)
+
+Each opens only after its cast member joins, and the second only once the story has reached the
+matching reveal, so nothing is spoiled early.
+
+| Cast | Bond 1 (perk) | Bond 2 (second skill) |
+|---|---|---|
+| Jester | The Cracked Mirror: "stopping right before the bad part" (ENCORE) | Names: Hikari's name at the top of the cue sheet, never his (MIRROR STEP) |
+| Queen | Case File: forty days of notes nobody believed (VETERAN) | The Kitchen Table: Ren's headphones (OBJECTION) |
+| Oracle | Two Monitors: watching the stream to read the house's tells (LONG SCAN) | The Last Ten Seconds: the trap is just "keep watching?" (OVERCLOCK) |
+| Prompter | The Net: nobody claps for the net (SAFETY NET) | What a Prompter Is For: "If you remember, I'm done" (CUE LIGHT) |
+| Limelight | Sparklers: someone once wrote her name in the air (PYROTECHNICS) | The Last Cue: she was only going to bow (FINALE FLARE) |
+
 ## The mechanics are the story
 
 - **Loss = the loop.** The Treasure falls, the clock resets to 11:59 and the chapter restarts "from

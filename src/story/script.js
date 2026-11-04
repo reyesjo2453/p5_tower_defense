@@ -294,3 +294,25 @@ export const LOOP_LINES = [
 
 /** Performance number the story starts counting from (the Prompter has seen 45 before you). */
 export const FIRST_PERFORMANCE = 46;
+
+/** Short in-battle lines (shown as a speech bubble, never pausing the fight). */
+export const BARKS = {
+  summon: {
+    jester: ['Come out. Whoever you are.', 'NO ONE, take the stage!', 'Blow them back!'],
+    jesterWhole: ['HARLEQUIN!', 'I remember my lines now.', 'Curtain wind!'],
+    queen: ['VERDICT. Guilty.', 'Order in the house!', 'Court is in session.'],
+    oracle: ['SIGHTLINE, light them up!', 'Painting targets!', 'I see everything!'],
+    prompter: ['GHOSTLIGHT. Places, everyone.', 'Nobody touches the Treasure.', 'Cue the safety net.'],
+    limelight: ['FLASHPAPER! Burn bright!', 'Nothing crosses this line.', 'Encore THIS.'],
+  },
+  allout: ['Everyone, on stage!', 'Big finish!', 'Take a bow!'],
+  boss: {
+    usher: ['Tickets, please. Yours have expired.', 'Please remain in your seats. FOREVER.'],
+    reviewer: ['One star. Derivative. Tedious.', 'I have seen this show forty-six times. It does not improve.'],
+    impresario: ['WE PAID FOR AN ENCORE.', 'INTERMISSION IS OVER.'],
+    phase2: ['CRITICS! TO THE AISLES!', 'THE HOUSE DEMANDS MORE!'],
+    phase3: ['SCENE CHANGE! STRIKE THEIR APPLAUSE!', 'YOUR APPLAUSE BELONGS TO US.'],
+  },
+  reveal: ['Found a weak spot!', 'Got their number.', 'There it is.'],
+};
+

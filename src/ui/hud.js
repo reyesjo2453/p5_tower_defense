@@ -113,7 +113,9 @@ export class Hud {
     const src = this.portraits.card[u.type] || '';
     if (pv.getAttribute('src') !== src) pv.setAttribute('src', src);
     pv.style.display = src ? '' : 'none';
-    this.q('pdesc').textContent = u.def.blurb;
+    const p = game?.persona?.(u);
+    this.q('pdesc').textContent = `${u.def.blurb}${p && game.mech.has('summon') ? ` · PERSONA ${p.name}: ${p.skill} (${p.cost} SP)` : ''}`;
+    this.q('pname').textContent = `${u.def.name} · ${u.def.role.toUpperCase()} · ${u.def.elem.toUpperCase()}`;
     this.panel.querySelector('[data-act="baton"]').style.display = canBaton ? '' : 'none';
     this.panel.classList.add('show');
   }
@@ -309,6 +311,20 @@ export class Hud {
       const tl = el.querySelector('[data-bt="to"]');
       if (tl.textContent !== lbl) tl.textContent = lbl;
     }
+  }
+
+  /** A cast member's line over the fight: small comic bubble, top left, gone in ~2.6 s. */
+  bark(speaker, text, img = null, name = null) {
+    this.root.querySelector('.bark')?.remove();
+    const nm = name ?? UNITS[speaker]?.name ?? speaker.toUpperCase();
+    const el = $(`<div class="bark sp-${speaker}">${img ? `<img alt="" src="${img}">` : '<i class="mask"></i>'}<div><b>${nm}</b><p></p></div></div>`);
+    el.querySelector('p').textContent = text;
+    this.root.appendChild(el);
+    clearTimeout(this.barkT);
+    this.barkT = setTimeout(() => {
+      el.classList.add('out');
+      setTimeout(() => el.remove(), 250);
+    }, 2600);
   }
 
   centerMsg(text, ms = 1400) {

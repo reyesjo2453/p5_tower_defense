@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import { SPRITE_HEIGHT, SPRITE_TWEAKS, SPRITE_KEY } from '../assets/manifest.js';
 import { keyOut, needsKey, cleanPose } from './keyout.js';
+import { UNITS } from '../sim/data.js';
 
 /** Loaded templates by unit id: { texture, aspect, height, tw }. */
 const templates = new Map();
@@ -286,11 +287,33 @@ export function instantiateSprite(id) {
   shadow.scale.set(shW, 1, shW * 0.55);
   root.add(shadow);
 
+  // afterimages: three tinted copies of the art that trail the dash and fade (speed read)
+  const accent = new THREE.Color(tw.accent ?? (id === 'jester' ? '#ff1a3d' : UNITS[id]?.accent ?? '#ff1a3d'));
+  const ghosts = [0, 1, 2].map((i) => {
+    const m = new THREE.Mesh(PLANE, new THREE.MeshBasicMaterial({
+      color: accent.clone().lerp(new THREE.Color(0xffffff), 0.35), map: texture, transparent: true, opacity: 0,
+      depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, toneMapped: false,
+    }));
+    m.scale.set(width, height, 1);
+    m.renderOrder = 2 - i;
+    m.visible = false;
+    root.add(m);
+    mats.push(m.material);
+    return m;
+  });
+
   let mirror = 1;
   let drop = 0;      // 0..DROP while falling in, then DROP
   let atk = -1;      // seconds since the current attack started, -1 when idle
   let reach = tw.lunge ?? 0.4;
   let breathT = 0;
+  let combo = 0;     // every third swing is a leaping finisher
+  let finisher = false;
+  let cast = -1;     // Persona cast pose: seconds since it started, -1 when not casting
+  let hop = -1;      // a quick hop (Baton Pass received / idle fidget)
+  let fidgetT = 4 + Math.random() * 5;
+  const _g = new THREE.Vector3();
+  const _w = new THREE.Vector3();
   return {
     root,
     parts: { body, art, shadow, ink },
@@ -327,7 +350,7 @@ export function instantiateSprite(id) {
 
       // attack state machine: ANTICIPATE (crouch, lean back) -> LUNGE (explosive snap) -> HIT_STOP
       // (frozen on contact) -> OVERSHOOT_RECOIL (damped spring home, dipping slightly backward)
-      let lunge = 0, sx = 1, sy = 1, lean = 0, flash = 0;
+      let lunge = 0, sx = 1, sy = 1, lean = 0, flash = 0, lift = 0;
       if (atk >= 0) {
         const before = atk;
         atk += dt;
@@ -344,12 +367,13 @@ export function instantiateSprite(id) {
           sx = 1.16 - 0.26 * k; // stretch along the dash
           sy = 0.84 + 0.3 * k;
           lean = -0.12 + 0.28 * k;
+          if (finisher) lift = Math.sin(k * Math.PI * 0.85) * 0.42; // leap into the finisher
         } else if (atk < T_RECOIL) {
           // hit-stop: hold the contact pose (impact squash), no breathing, no motion
           lunge = reach;
-          sx = 1.15;
-          sy = 0.85;
-          lean = 0.16;
+          sx = finisher ? 1.22 : 1.15;
+          sy = finisher ? 0.8 : 0.85;
+          lean = finisher ? 0.26 : 0.16;
           flash = 1;
         } else if (atk < T_END) {
           const f = spring01((atk - T_RECOIL) / ATTACK.OVERSHOOT_RECOIL);
@@ -371,26 +395,91 @@ export function instantiateSprite(id) {
       if (art.material.map !== map) for (const m of mats) m.map = map;
       if (lunge) root.position.addScaledVector(atkDir, lunge);
 
+      // afterimages: during the dash and contact, ghosts sit back along the path and fade
+      const dashing = state === 'LUNGE' || stopped;
+      for (let i = 0; i < ghosts.length; i++) {
+        const gm = ghosts[i];
+        gm.visible = dashing && reach > 0.2;
+        if (!gm.visible) continue;
+        const back = lunge * (0.28 + i * 0.24);
+        root.getWorldPosition(_w);
+        _g.copy(_w).addScaledVector(atkDir, -back);
+        root.worldToLocal(_g);
+        gm.position.set(_g.x, lift * (1 - i * 0.3), _g.z);
+        gm.quaternion.copy(face.quaternion);
+        gm.scale.set(mirror * width * sx, height * sy, 1);
+        gm.material.opacity = (stopped ? 0.22 : 0.34) / (1 + i);
+      }
+
+      // Persona cast: rise, glow and hold the strike pose while the Persona appears
+      let castLift = 0, glow = 0;
+      if (cast >= 0) {
+        cast += dt;
+        const k = cast / 1.1;
+        if (k >= 1) cast = -1;
+        else {
+          castLift = Math.sin(Math.min(1, k * 1.6) * Math.PI * 0.5) * 0.3 * (1 - Math.max(0, (k - 0.7) / 0.3));
+          glow = 0.6 * Math.sin(k * Math.PI);
+          sx *= 1 + 0.05 * Math.sin(k * 20) * (1 - k);
+        }
+      }
+      // hops: Baton received, or an idle fidget every few seconds
+      if (atk < 0 && cast < 0 && drop >= DROP) {
+        fidgetT -= dt;
+        if (fidgetT <= 0) {
+          hop = 0;
+          fidgetT = 5 + Math.random() * 6;
+        }
+      }
+      let hopLift = 0;
+      if (hop >= 0) {
+        hop += dt;
+        const k = hop / 0.34;
+        if (k >= 1) hop = -1;
+        else {
+          hopLift = Math.sin(k * Math.PI) * 0.14;
+          sy *= k < 0.15 ? 1 - k * 0.8 : k > 0.85 ? 1 - (1 - k) * 0.8 : 1 + 0.04;
+        }
+      }
+      const sway = Math.sin(breathT * 0.9 + offset * 2) * 0.025; // weight shift
+      if (cast >= 0 || (state === 'LUNGE' || stopped) && finisher) {
+        // a strike frame for the cast / finisher if there is one
+        const f = frames.strike ?? texture;
+        if (art.material.map !== f) for (const m of mats) m.map = f;
+      }
+
       // breathing idle: vertical bob + a small scale pulse, shadow shrinks/fades as the body rises
       if (!stopped) breathT += dt; // hit-stop freezes the idle too
       const s = Math.sin(breathT * 3.0 + offset);
-      body.position.y = fall + s * breath;
+      body.position.y = fall + s * breath + lift + castLift + hopLift;
       body.scale.set(mirror * sx, (1 + s * 0.02) * sy, 1);
-      body.rotation.z = -mirror * lean;
+      body.rotation.z = -mirror * (lean + (atk < 0 ? sway : 0));
       ink.scale.set(mirror * width * sx, height * 0.42, 1);
-      const lift = Math.min(1, (s + 1) * 0.5 + fall); // 0 = low, 1 = high
-      const sh = 1.04 - lift * 0.08 - Math.min(fall, 1) * 0.4;
+      const high = Math.min(1, (s + 1) * 0.5 + fall + (lift + castLift + hopLift) * 2); // 0 = low, 1 = high
+      const sh = 1.04 - high * 0.08 - Math.min(fall, 1) * 0.4;
       shadow.scale.set(shW * sh, 1, shW * 0.55 * sh);
-      shadow.material.opacity = 0.52 - lift * 0.12;
+      shadow.material.opacity = 0.52 - high * 0.12;
       ink.material.opacity = fall > 0 ? 0.3 * Math.max(0, 1 - fall) : 0.3;
-      art.material.color.setScalar(1 + flash * 0.75); // brief hit flash
+      art.material.color.setScalar(1 + flash * 0.75 + glow); // brief hit flash / cast glow
       return event;
     },
     /** Start an ANTICIPATE -> LUNGE -> HIT_STOP -> OVERSHOOT_RECOIL cycle; `dist` = dash length. */
     playAttack(dist) {
       if (dist != null) reach = dist;
       atk = 0;
+      combo++;
+      finisher = combo % 3 === 0 && reach > 0.2;
       return true;
+    },
+    /** Was the swing just started a leaping finisher? (the view adds a bigger impact) */
+    get finisher() { return finisher; },
+    /** Persona summon: rise and glow while the Persona appears. */
+    playCast() {
+      cast = 0;
+    },
+    /** A quick hop (Baton Pass received). */
+    playHop() {
+      hop = 0;
     },
     dispose() {
       body.traverse((o) => o.material?.dispose());

@@ -1,5 +1,67 @@
 # Changelog
 
+## 4.0.0 – Depth, progression and a full animation pass
+
+**Fights**
+- **Elemental affinities.** Every Phantom has an element: Jester slash, Queen strike, Oracle tech,
+  Prompter light, Limelight fire. Every Shadow is weak to one element and may resist one.
+  - A weak hit does 1.5× damage and 2× posture damage. A resisted hit does half.
+  - Affinities show over a Shadow's head once they're known: Oracle marking that type,
+    SIGHTLINE, or landing a weak hit reveals them. The save remembers them.
+- **Four new Shadows**, each introduced in the story:
+  - BOUNCER carries a shield that only weak hits can strip.
+  - STAGEHAND heals the Shadows around it.
+  - DOPPEL splits in two when it dies.
+  - CRITIC is fast and fragile.
+- **Mini-bosses** end Acts I and II: THE USHER (a big shield) and THE REVIEWER, whose bad reviews
+  slow nearby Phantoms.
+- **The Impresario has three phases.** At 66% it sends critics down every other runway. At 33% it
+  calls a scene change: it steps back up the runway, steals 40 SP and walks faster. Each phase
+  has its own lines.
+- **Difficulty modes**: Story / Normal / Hard (Treasure HP, Shadow HP, starting ¥).
+- **Stars**: 1–3 per stage by Treasure HP left.
+
+**Progression**
+- **Playbill**: replay any stage reached, keep your best stars, and rewatch any scene, including
+  the ending.
+- **Green Room**: stars pay for ten new bond scenes, two per cast member, unlocked as the story
+  goes so nothing is spoiled early.
+  - Bond 1 unlocks a perk: ENCORE, VETERAN, LONG SCAN, SAFETY NET, PYROTECHNICS.
+  - Bond 2 unlocks a second Persona skill: MIRROR STEP, OBJECTION, OVERCLOCK, CUE LIGHT,
+    FINALE FLARE. Choose skill A or B per Phantom.
+- **Daily Rehearsal**: one seed and tier per calendar day with two modifiers (Rush, Heavy Set,
+  Glass Crown, No Rehearsals, House Lights Down, Swarm). Your best stars for the day are kept.
+
+**Presentation and animation**
+- **Phantoms**:
+  - afterimage trails on every dash;
+  - every third melee swing is a leaping finisher with a bigger impact;
+  - a rising, glowing cast pose when their Persona is summoned;
+  - a hop when they receive a Baton Pass;
+  - idle weight shifts and fidgets.
+- **Shadows**:
+  - they rise out of the floor when they spawn;
+  - knockback and a flinch on every hit;
+  - a gait per type (runners sprint leaning forward, heavies stomp, bosses sway);
+  - a dazed wobble when stunned;
+  - on death they're thrown back, the mask pops loose and spins away, and they sink into ink;
+  - distinct silhouettes for each new type (riot shield, headset and glowing belt, two-tone mask,
+    top hat and quill, usher's cap and torch, monocle).
+- **Personas**: sleeves sweep open and strike down, a rune sigil turns on the floor, and the
+  camera swings low around the summon.
+- **Music**: the procedural groove changes key per act and follows the action, from a calm kick
+  and snare to four-on-the-floor with brass when Shadows near the Treasure or a boss is on stage.
+- **New sounds**: summon choir swell + gong, weakness ping, shield clank, boss brass hit.
+- **Battle barks**: short speech bubbles from the cast and the bosses that never pause the fight.
+- **Scene panels**: a slow push-in on the art and a print-texture overlay.
+
+**Quality of life**
+- **Pause menu** (resume, from the top, settings, title) and **Settings**: music and sound volume,
+  difficulty, text size (S–XL), default game speed, a colour-blind palette and reduce motion (no
+  shake, no camera swings, no looping effects).
+- **Installable**: a web app manifest, icons and an offline service worker. Add it to the home
+  screen and it plays full screen without a connection.
+
 ## 3.0.0 – Fifteen stages, Personas, one thing at a time
 
 - **Fifteen story stages instead of eight one-wave chapters.** Each stage is its own map with 3–5

@@ -127,10 +127,25 @@ export class PersonaFx {
     const mask = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.mask(id), transparent: true, depthWrite: false, toneMapped: false }));
     mask.scale.set(1.5, 1.5, 1);
     mask.position.y = 3.7;
+    // arms: two long flared sleeves that sweep open as it rises
+    const arms = [-1, 1].map((sd) => {
+      const arm = new THREE.Mesh(new THREE.ConeGeometry(0.28, 2.2, 10, 1, true), glowMat(color, 1.6, { transparent: true, opacity: 0.3, additive: true, depthWrite: false, side: THREE.DoubleSide }));
+      arm.geometry.translate(0, -1.1, 0); // pivot at the shoulder
+      arm.position.set(sd * 0.45, 3.2, 0);
+      arm.rotation.z = sd * 0.2;
+      arm.userData.side = sd;
+      g.add(arm);
+      return arm;
+    });
+    // a sigil on the floor: a ring of rune ticks that turns under the Persona
+    const sigil = new THREE.Mesh(new THREE.RingGeometry(ev.r * 0.82, ev.r, 24, 1), glowMat(color, 2, { transparent: true, opacity: 0.7, additive: true, depthWrite: false, side: THREE.DoubleSide }));
+    sigil.rotation.x = -Math.PI / 2;
+    sigil.position.copy(p).setY(RUNWAY_H + 0.03);
+    this.scene.add(sigil);
     g.add(outer, inner, mask);
     g.scale.setScalar(0.01);
     this.scene.add(g);
-    this.live.push({ g, outer, inner, mask, t: 0, life: 1.9 });
+    this.live.push({ g, outer, inner, mask, arms, sigil, t: 0, life: 1.9 });
     // a streak from the summoner to the apparition, then the skill's own effect
     if (from) this.fx.beam(from.clone().setY(1.2), p.clone().setY(2.2), color);
     this.fx.ring(p.clone().setY(RUNWAY_H + 0.05), color, ev.r * 2.2, 0.55);
@@ -177,8 +192,25 @@ export class PersonaFx {
       a.inner.material.opacity = 0.35 * fade;
       a.mask.material.opacity = fade;
       a.mask.position.y = 3.7 + (k > 0.7 ? (k - 0.7) * 3 : 0);
+      // sleeves sweep open on the rise, then strike down at ~0.4 (the skill lands)
+      const open = Math.min(1, a.t / 0.35);
+      const strike = a.t > 0.35 && a.t < 0.6 ? Math.sin(((a.t - 0.35) / 0.25) * Math.PI) : 0;
+      for (const arm of a.arms) {
+        arm.rotation.z = arm.userData.side * (0.2 + open * 1.1 - strike * 0.9);
+        arm.material.opacity = 0.3 * fade;
+      }
+      a.sigil.rotation.z += dt * 2.2;
+      a.sigil.material.opacity = 0.7 * fade;
+      a.sigil.scale.setScalar(0.6 + Math.min(1, a.t / 0.25) * 0.4);
       if (a.t >= a.life) {
         this.scene.remove(a.g);
+        this.scene.remove(a.sigil);
+        a.sigil.geometry.dispose();
+        a.sigil.material.dispose();
+        for (const arm of a.arms) {
+          arm.geometry.dispose();
+          arm.material.dispose();
+        }
         a.outer.geometry.dispose();
         a.outer.material.dispose();
         a.inner.geometry.dispose();
@@ -251,7 +283,10 @@ export class PersonaFx {
 
   /** New stage: drop anything still on the board. */
   clear() {
-    for (const a of this.live) this.scene.remove(a.g);
+    for (const a of this.live) {
+      this.scene.remove(a.g);
+      this.scene.remove(a.sigil);
+    }
     this.live = [];
     for (const uid of [...this.stuns.keys()]) this.dropStun(uid);
     for (const m of this.zones) m.visible = false;

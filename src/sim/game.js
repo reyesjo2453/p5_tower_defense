@@ -7,7 +7,7 @@
 //
 // Shared SP: posture breaks and kills fill it, Persona summons spend it (game.summon), and a full
 // gauge is the All-Out Attack.
-import { UNITS, ENEMIES, WAVES, RULES, RANKS, CAMPAIGN, ALL_MECHANICS, CENTER, PATHS } from './data.js';
+import { UNITS, ENEMIES, WAVES, RULES, RANKS, CAMPAIGN, ALL_MECHANICS, CENTER, PATHS, AFFINITY, DIFFICULTY, STARS } from './data.js';
 import { buildBoard, waypoints } from './board.js';
 
 const dist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
@@ -27,15 +27,31 @@ export class Game {
   /**
    * opts: { rules, stage ({ paths }), waves, chapter (campaign index: unlocks), unlockAll (bool:
    * every unit and mechanic; tests / sandbox), hp (Shadow HP multiplier), hpRamp (per-wave HP
-   * multipliers), personaWhole (Jester's Persona has its name back) }
+   * multipliers), personaWhole (Jester's Persona has its name back), difficulty (story | normal |
+   * hard), known (Shadow types whose affinities are already known), bonds ({ unit: 0..2 }),
+   * loadout ({ unit: 'A' | 'B' }: which Persona skill), blind (affinities never revealed),
+   * noMech (a mechanic switched off, e.g. 'rank') }
    */
   constructor(opts = {}) {
-    this.rules = { ...RULES, ...(opts.rules || {}) };
+    const diff = DIFFICULTY[opts.difficulty ?? 'normal'] ?? DIFFICULTY.normal;
+    this.difficulty = opts.difficulty ?? 'normal';
+    this.bonds = opts.bonds ?? {};
+    this.loadout = opts.loadout ?? {};
+    this.blind = !!opts.blind;
+    this.noMech = opts.noMech ?? null;
+    const base = { ...RULES, ...(opts.rules || {}) };
+    this.rules = {
+      ...base,
+      // difficulty only adjusts what the stage didn't set explicitly
+      treasureHp: (opts.rules?.treasureHp ?? diff.treasureHp) + (this.perk('prompter') ? 3 : 0),
+      startCash: Math.round(base.startCash * diff.cash),
+    };
     this.stage = opts.stage || { paths: PATHS };
     this.paths = this.stage.paths;
     this.lanes = Object.keys(this.paths);
     this.waves = opts.waves || WAVES;
-    this.hp = opts.hp ?? 1;
+    this.hp = (opts.hp ?? 1) * diff.hp;
+    this.known = new Set(opts.known ?? []);
     this.hpRamp = opts.hpRamp ?? null;
     this.unlockAll = !!opts.unlockAll;
     this.personaWhole = !!opts.personaWhole;
@@ -74,11 +90,40 @@ export class Game {
     if (this.unlockAll) {
       this.unlocked = new Set(Object.keys(UNITS));
       this.mech = new Set(ALL_MECHANICS);
+      if (this.noMech) this.mech.delete(this.noMech);
       return;
     }
     const { units, mech } = unlocksAt(i);
     this.unlocked = units;
     this.mech = mech;
+    if (this.noMech) this.mech.delete(this.noMech);
+  }
+
+  /** Is this cast member's bond perk active (bond 1+)? */
+  perk(type) {
+    return (this.bonds?.[type] ?? 0) >= 1;
+  }
+
+  /** Stars for the result: by the share of the Treasure left. */
+  get stars() {
+    if (this.state !== 'won') return 0;
+    const f = this.treasure / this.rules.treasureHp;
+    return f >= STARS[0] ? 3 : f >= STARS[1] ? 2 : 1;
+  }
+
+  /** Damage / posture multipliers for element `el` against Shadow `e`. */
+  affinity(e, el) {
+    if (!el) return { dmg: 1, posture: 1, weak: false, resist: false };
+    if (e.def.weak?.includes(el)) return { dmg: AFFINITY.weakDmg, posture: AFFINITY.weakPosture, weak: true, resist: false };
+    if (e.def.resist?.includes(el)) return { dmg: AFFINITY.resist, posture: AFFINITY.resist, weak: false, resist: true };
+    return { dmg: 1, posture: 1, weak: false, resist: false };
+  }
+
+  /** Learn a Shadow type's affinities (shown over its head from now on). */
+  reveal(type) {
+    if (this.blind || this.known.has(type)) return;
+    this.known.add(type);
+    this.emit('reveal', { type });
   }
 
   /** The campaign stage this game plays (its label / title), or the first one outside the campaign. */
@@ -134,6 +179,7 @@ export class Game {
     if (!this.canPlace(type, x, y)) return null;
     const u = this.makeUnit(type, x, y);
     this.cash -= u.def.cost;
+    if (type === 'queen' && this.perk('queen') && this.mech.has('rank')) u.rank = 2; // VETERAN
     this.units.push(u);
     this.emit('place', { unit: u });
     return u;
@@ -245,14 +291,17 @@ export class Game {
     this.sp = Math.min(this.rules.spMax, this.sp + n);
   }
 
+  /** The Persona skill `u` brings: its second skill when the loadout picks it and the bond allows. */
   persona(u) {
     const p = u.def.persona;
-    return { ...p, name: p.whole && this.personaWhole ? p.whole : p.name };
+    const alt = this.loadout?.[u.type] === 'B' && (this.bonds?.[u.type] ?? 0) >= 2 && u.def.personaAlt;
+    const base = alt ? { ...p, ...u.def.personaAlt } : { ...p, kind: p.id };
+    return { ...base, id: p.id, name: p.whole && this.personaWhole ? p.whole : p.name };
   }
 
   canSummon(type) {
     const u = this.onStage(type);
-    return !!u && this.state === 'running' && this.mech.has('summon') && this.sp >= u.def.persona.cost;
+    return !!u && this.state === 'running' && this.mech.has('summon') && this.sp >= this.persona(u).cost;
   }
 
   /** Bullet-time while the player aims a Persona. */
@@ -264,27 +313,60 @@ export class Game {
   summon(type, x, y) {
     if (!this.canSummon(type)) return false;
     const u = this.onStage(type);
-    const p = u.def.persona;
+    const p = this.persona(u);
     this.sp -= p.cost;
     this.aiming = false;
     const inside = this.enemies.filter((e) => dist(e.x, e.y, x, y) <= p.radius);
-    switch (p.id) {
+    const el = u.def.elem;
+    switch (p.kind) {
       case 'noone': {
         const push = this.personaWhole ? p.pushWhole : p.push;
         for (const e of inside) {
-          this.pushBack(e, e.def.boss ? push * 0.4 : push);
-          this.damage(u, e, 0, p.posture);
+          this.pushBack(e, e.def.boss || e.def.miniboss ? push * 0.4 : push);
+          this.damage(u, e, 0, p.posture, { elem: el });
         }
         break;
       }
       case 'verdict':
         for (const e of inside) {
-          e.stun = Math.max(e.stun, e.def.boss ? p.stun * 0.5 : p.stun);
-          this.damage(u, e, p.dmg * RANKS.dmgMul[u.rank - 1], p.posture);
+          e.stun = Math.max(e.stun, e.def.boss || e.def.miniboss ? p.stun * 0.5 : p.stun);
+          this.damage(u, e, p.dmg * RANKS.dmgMul[u.rank - 1], p.posture, { elem: el });
         }
         break;
       case 'sightline':
-        for (const e of inside) e.mark = Math.max(e.mark, p.mark);
+        for (const e of inside) {
+          e.mark = Math.max(e.mark, p.mark);
+          this.reveal(e.type);
+        }
+        break;
+      case 'mirrorstep':
+        for (const e of inside) this.damage(u, e, 0, p.posture, { elem: el });
+        break;
+      case 'objection': {
+        const tgt = inside.reduce((a, e) => (!a || e.hp > a.hp ? e : a), null);
+        if (tgt) this.damage(u, tgt, p.dmg * RANKS.dmgMul[u.rank - 1], p.posture, { elem: el });
+        break;
+      }
+      case 'overclock':
+        for (const a of this.units) {
+          a.buffs = a.buffs.filter((b) => b.key !== 'overclock');
+          a.buffs.push({ key: 'overclock', t: p.t, intervalMul: p.intervalMul });
+        }
+        break;
+      case 'cuelight': {
+        const b = this.rules.baton;
+        for (const a of this.units) {
+          if (dist(a.x, a.y, x, y) > p.radius) continue;
+          a.buffs = a.buffs.filter((k) => k.key !== 'baton');
+          a.buffs.push({ key: 'baton', t: p.t, dmgMul: b.dmgMul, postureMul: b.postureMul, intervalMul: b.intervalMul });
+        }
+        break;
+      }
+      case 'flare':
+        for (const e of inside) {
+          this.damage(u, e, p.dmg * RANKS.dmgMul[u.rank - 1], 15, { elem: el });
+          if (this.enemies.includes(e)) this.ignite(u, e, 1.5);
+        }
         break;
       case 'ghostlight': {
         const heal = Math.min(p.heal, this.rules.treasureHp - this.treasure);
@@ -304,9 +386,9 @@ export class Game {
   }
 
   /** Push a Shadow `d` tiles back up its runway (Curtain Wind). */
-  pushBack(e, d) {
+  pushBack(e, d, silent = false) {
     const from = { x: e.x, y: e.y };
-    const s = Math.max(0, e.walked - d);
+    const s = Math.max(0, Math.min(this.pathLen[e.path].at(-1) - 0.01, e.walked - d));
     const wp = e.wp;
     const cum = this.pathLen[e.path];
     let seg = 1;
@@ -319,7 +401,7 @@ export class Game {
     e.y = a.y + (b.y - a.y) * k;
     e.seg = seg;
     e.walked = s;
-    this.emit('push', { enemy: e, from });
+    if (!silent) this.emit('push', { enemy: e, from });
   }
 
   // ---------------------------------------------------------------- loop
@@ -396,7 +478,7 @@ export class Game {
     }
   }
 
-  spawn(type, pathId) {
+  spawn(type, pathId, at = null) {
     const def = ENEMIES[type];
     const wp = this.wp[pathId];
     // tougher stages: HP scales fully, posture by the square root
@@ -408,9 +490,11 @@ export class Game {
       uid: this.uid++, type, def, path: pathId, wp, seg: 1, maxHp, maxPosture,
       x: wp[0].x, y: wp[0].y, hp: maxHp, posture: maxPosture, down: 0, mark: 0, flash: 0,
       dirX: 1, dirY: 0, walked: 0, burn: null, stun: 0, slowT: 0,
+      shield: def.shield ?? 0, healT: 0, reviewT: 0, phase: 0,
     };
+    if (at) this.pushBack(e, -at.walked, true); // a split Shadow starts where its parent fell
     this.enemies.push(e);
-    this.emit('spawn', { enemy: e });
+    this.emit('spawn', { enemy: e, named: !!(def.boss || def.miniboss) });
     return e;
   }
 
@@ -432,6 +516,7 @@ export class Game {
         if (!this.enemies.includes(e)) return;
       }
     }
+    this.enemyAbilities(e, dt);
     if (e.slowT > 0) e.slowT = Math.max(0, e.slowT - dt);
     let slow = e.mark > 0 ? 1 - UNITS.oracle.mark.slow : 1;
     if (e.slowT > 0) slow = Math.min(slow, 0.5);
@@ -452,7 +537,7 @@ export class Game {
       e.stun = Math.max(0, e.stun - dt);
       return;
     }
-    let step = e.def.speed * slow * dt;
+    let step = e.def.speed * (e.haste ?? 1) * slow * dt;
     while (step > 0 && e.seg < e.wp.length) {
       const t = e.wp[e.seg];
       const d = dist(e.x, e.y, t.x, t.y);
@@ -483,6 +568,59 @@ export class Game {
         this.emit('lost');
       }
     }
+  }
+
+  /** Stagehands patch their friends; the Reviewer pans the Phantoms near it. */
+  enemyAbilities(e, dt) {
+    const d = e.def;
+    if (d.heal && e.down <= 0) {
+      e.healT += dt;
+      if (e.healT >= d.heal.every) {
+        e.healT = 0;
+        const healed = [];
+        for (const o of this.enemies) {
+          if (o === e || o.hp >= o.maxHp || dist(o.x, o.y, e.x, e.y) > d.heal.radius) continue;
+          o.hp = Math.min(o.maxHp, o.hp + o.maxHp * d.heal.pct);
+          healed.push(o);
+        }
+        if (healed.length) this.emit('enemyHeal', { enemy: e, healed });
+      }
+    }
+    if (d.review && e.down <= 0) {
+      e.reviewT += dt;
+      if (e.reviewT >= d.review.every) {
+        e.reviewT = 0;
+        const hit = this.units.filter((u) => dist(u.x, u.y, e.x, e.y) <= d.review.radius);
+        for (const u of hit) {
+          u.buffs = u.buffs.filter((b) => b.key !== 'review');
+          u.buffs.push({ key: 'review', t: d.review.t, intervalMul: d.review.intervalMul });
+        }
+        this.emit('review', { enemy: e, units: hit });
+      }
+    }
+  }
+
+  /** The Impresario changes the scene as it loses HP. */
+  bossPhase(e) {
+    const ph = e.def.phases;
+    if (!ph || e.phase >= ph.length || e.hp / e.maxHp > ph[e.phase]) return;
+    e.phase++;
+    if (e.phase === 1) {
+      // Act two: the house sends its critics down every other runway, and a fresh mask
+      for (const lane of this.lanes) if (lane !== e.path) for (let i = 0; i < 2; i++) this.spawnQueue.push({ at: this.waveTimer + 0.6 + i * 0.9, type: 'critic', path: lane });
+      this.spawnQueue.sort((a, b) => a.at - b.at);
+      e.posture = e.maxPosture;
+      e.down = 0;
+    } else {
+      // Act three: a scene change. It steps back up the runway, takes the house's applause (SP)
+      // and walks faster
+      this.pushBack(e, 4);
+      this.sp = Math.max(0, this.sp - this.rules.bossSpSteal);
+      e.posture = e.maxPosture;
+      e.down = 0;
+      e.haste = 1.3;
+    }
+    this.emit('bossPhase', { enemy: e, phase: e.phase + 1 });
   }
 
   removeEnemy(e) {
@@ -567,11 +705,14 @@ export class Game {
       }
     }
     if (u.def.burn && this.enemies.includes(tgt)) this.ignite(u, tgt, 1);
-    if (u.def.mark && this.enemies.includes(tgt)) tgt.mark = u.def.mark.t;
+    if (u.def.mark && this.enemies.includes(tgt)) {
+      tgt.mark = u.def.mark.t + (this.perk('oracle') ? 2 : 0);
+      this.reveal(tgt.type);
+    }
   }
 
   ignite(u, e, k) {
-    this.igniteDps(u, e, u.def.burn.dps * RANKS.dmgMul[u.rank - 1] * k, u.def.burn.t);
+    this.igniteDps(u, e, u.def.burn.dps * RANKS.dmgMul[u.rank - 1] * k * (this.perk('limelight') ? 1.5 : 1), u.def.burn.t);
   }
 
   igniteDps(u, e, dps, t) {
@@ -583,34 +724,58 @@ export class Game {
     e.burn = { t: Math.max(t, e.burn?.t ?? 0), dps, acc: e.burn?.acc ?? 0, tick: e.burn?.tick ?? 0.5, src: u };
   }
 
-  damage(u, e, dmg, posture, { raw = false, dot = false } = {}) {
+  damage(u, e, dmg, posture, { raw = false, dot = false, elem = null } = {}) {
     if (!this.enemies.includes(e)) return;
-    // crit: striking a broken (DOWN) Shadow; weak: posture damage into an Oracle mark
+    const el = raw ? null : elem ?? (dot ? 'fire' : u?.def.elem ?? null);
+    const aff = this.affinity(e, el);
+    // crit: striking a broken (DOWN) Shadow; weak: an element it is weak to, or posture into a mark
     const crit = !raw && !dot && e.down > 0;
-    const weak = e.down <= 0 && posture > 0 && e.mark > 0;
+    const marked = e.down <= 0 && posture > 0 && e.mark > 0;
+    if (aff.weak && !dot) this.reveal(e.type);
     if (!raw && e.down > 0) dmg *= this.rules.downDmgMul;
+    dmg *= aff.dmg;
+    posture *= aff.posture;
+    // a shield soaks most of everything until weak hits strip it
+    let shieldHit = false;
+    if (e.shield > 0 && !raw) {
+      if (aff.weak && !dot) {
+        e.shield--;
+        shieldHit = true;
+        this.emit('shield', { enemy: e, left: e.shield });
+      } else {
+        dmg *= 0.6;
+        posture *= 0.2;
+      }
+    }
     e.hp -= dmg;
     if (!dot) e.flash = 0.1;
     if (e.down <= 0 && posture > 0) {
-      const mul = weak ? UNITS.oracle.mark.postureMul : 1;
+      const mul = marked ? UNITS.oracle.mark.postureMul : 1;
       e.posture -= posture * mul;
       if (e.posture <= 0) this.breakPosture(u, e);
     }
-    this.emit('hit', { unit: u, enemy: e, dmg, crit, weak, raw, dot });
+    this.emit('hit', { unit: u, enemy: e, dmg, crit, weak: aff.weak || marked, resist: aff.resist, elem: el, raw, dot, shieldHit });
     if (e.hp <= 0) {
       this.removeEnemy(e);
       this.cash += e.def.reward;
       this.kills++;
       this.gainSp(this.rules.spKill);
       this.emit('kill', { enemy: e, unit: u });
+      if (e.def.split) for (let i = 0; i < e.def.split.n; i++) {
+        const c = this.spawn(e.def.split.into, e.path, { walked: Math.max(0, e.walked - i * 0.5) });
+        c.maxHp = Math.round(c.maxHp * 0.6); // the halves are frailer than a fresh Shadow
+        c.hp = c.maxHp;
+      }
+      return;
     }
+    this.bossPhase(e);
   }
 
   breakPosture(u, e) {
     e.posture = 0;
     e.down = this.rules.downTime;
     this.hitStop = this.rules.hitStop;
-    this.gainSp(this.rules.spBreak);
+    this.gainSp(this.rules.spBreak + (u?.type === 'jester' && this.perk('jester') ? 4 : 0));
     this.emit('break', { enemy: e, unit: u });
     if (u && this.units.includes(u)) {
       // 1 MORE: the breaker acts again immediately and may pass the baton.

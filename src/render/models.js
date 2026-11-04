@@ -316,7 +316,12 @@ export function buildLimelight() {
 // ---------------------------------------------------------------- SHADOW (enemy)
 export function buildShadow(kind = 'mannequin') {
   const root = new THREE.Group();
-  const obsidian = toon(0x07070a, { spec: 1.6, shininess: 160, rim: 1.0, rimColor: kind === 'boss' ? 0xffd24a : 0xff2a4a });
+  // rim colour reads the type at a glance: gold boss, crimson rank-and-file, cyan shields, green
+  // stagehands, violet doppels, white critics, orange ushers, blue reviewers
+  const RIM = { boss: 0xffd24a, bouncer: 0x8fd0ff, stagehand: 0x39ff88, doppel: 0xb05cff, critic: 0xf4f0ea, usher: 0xff8a2a, reviewer: 0x6f7bff };
+  const obsidian = toon(0x07070a, { spec: 1.6, shininess: 160, rim: 1.0, rimColor: RIM[kind] ?? 0xff2a4a });
+  const heavy = kind === 'brute' || kind === 'bouncer' || kind === 'usher' || kind === 'reviewer';
+  const thin = kind === 'critic' || kind === 'runner';
   const gold = toon(0xe8b923, { spec: 1.8, shininess: 120, rim: 0.7, rimColor: 0xfff1b0 });
   const body = new THREE.Group();
   root.add(body);
@@ -328,14 +333,14 @@ export function buildShadow(kind = 'mannequin') {
     body.add(leg);
     legs.push(leg);
   }
-  const torso = mesh(new THREE.CapsuleGeometry(kind === 'brute' ? 0.2 : 0.14, 0.38, 6, 12), obsidian, 0, 0.88, 0);
+  const torso = mesh(new THREE.CapsuleGeometry(heavy ? 0.2 : thin ? 0.11 : 0.14, 0.38, 6, 12), obsidian, 0, 0.88, 0);
   torso.scale.set(1, 1, 0.75);
   body.add(torso);
   const arms = [];
   for (const sx of [-1, 1]) {
     const arm = new THREE.Group();
-    arm.position.set(sx * (kind === 'brute' ? 0.26 : 0.19), 1.08, 0);
-    arm.add(mesh(new THREE.CapsuleGeometry(kind === 'brute' ? 0.065 : 0.045, 0.4, 4, 8), obsidian, 0, -0.24, 0));
+    arm.position.set(sx * (heavy ? 0.26 : 0.19), 1.08, 0);
+    arm.add(mesh(new THREE.CapsuleGeometry(heavy ? 0.065 : 0.045, 0.4, 4, 8), obsidian, 0, -0.24, 0));
     arm.rotation.z = sx * 0.1;
     body.add(arm);
     arms.push(arm);
@@ -366,10 +371,60 @@ export function buildShadow(kind = 'mannequin') {
       head.add(sp);
     }
   }
+  const extra = {};
+  if (kind === 'bouncer' || kind === 'usher') {
+    // a riot-door shield on the left arm (hidden by the view once it is stripped)
+    const sh = new THREE.Group();
+    sh.add(mesh(new THREE.BoxGeometry(0.05, 0.5, 0.34), toon(0x1a2a3a, { spec: 1.4, rim: 0.9, rimColor: 0x8fd0ff }), 0, 0, 0));
+    const bar = mesh(new THREE.BoxGeometry(0.06, 0.04, 0.3), glowMat(0x8fd0ff, 2.4), 0.005, 0.12, 0);
+    bar.userData.noOutline = true;
+    sh.add(bar);
+    sh.position.set(-0.3, 0.86, 0.12);
+    body.add(sh);
+    extra.shield = sh;
+  }
+  if (kind === 'usher') {
+    // peaked usher's cap + a lit torch
+    head.add(mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.08, 16), toon(0x2a0a0a, { rim: 0.6 }), 0, 0.12, 0));
+    head.add(mesh(new THREE.BoxGeometry(0.2, 0.015, 0.12), gold, 0, 0.085, 0.08));
+    const torch = mesh(new THREE.SphereGeometry(0.05, 8, 6), glowMat(0xff8a2a, 3), 0.3, 1.1, 0.15);
+    torch.userData.noOutline = true;
+    body.add(torch);
+  }
+  if (kind === 'stagehand') {
+    // headset + a glowing toolbelt: it patches its friends
+    head.add(mesh(new THREE.TorusGeometry(0.13, 0.012, 4, 16, Math.PI), toon(0x111111), 0, 0.02, 0));
+    const belt = mesh(new THREE.TorusGeometry(0.15, 0.025, 4, 18), glowMat(0x39ff88, 2), 0, 0.72, 0);
+    belt.rotation.x = Math.PI / 2;
+    belt.userData.noOutline = true;
+    body.add(belt);
+    extra.glow = belt;
+  }
+  if (kind === 'doppel') {
+    // a half-and-half mask: one side gold, the other black: it is two people
+    const half = mesh(new THREE.SphereGeometry(0.13, 12, 10, 0, Math.PI * 0.42, Math.PI * 0.18, Math.PI * 0.62), toon(0x050505, { side: THREE.DoubleSide, rim: 1, rimColor: 0xb05cff }));
+    half.rotation.y = -Math.PI * 0.42;
+    mask.add(half);
+  }
+  if (kind === 'critic') {
+    // a tall thin top hat with a quill
+    head.add(mesh(new THREE.CylinderGeometry(0.08, 0.09, 0.22, 12), toon(0x0a0a0a, { rim: 0.8, rimColor: 0xffffff }), 0, 0.2, 0));
+    const quill = mesh(new THREE.ConeGeometry(0.018, 0.22, 4), toon(0xf4f0ea), 0.08, 0.28, 0);
+    quill.rotation.z = -0.5;
+    head.add(quill);
+  }
+  if (kind === 'reviewer') {
+    // a monocle that glows and a scroll of bad reviews
+    const mono = mesh(new THREE.TorusGeometry(0.035, 0.008, 4, 14), glowMat(0x6f7bff, 3), 0.045, 0.02, 0.13);
+    mono.userData.noOutline = true;
+    mask.add(mono);
+    body.add(mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.3, 10), toon(0xf4f0ea), 0.3, 0.95, 0.12));
+    head.add(mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.02, 16), toon(0x0a0a0a), 0, 0.1, 0));
+  }
   body.add(head);
   outline(root, 0.012, 0x1a0006);
   shadows(root);
-  return { root, parts: { body, legs, arms, head, mask, eyes }, height: 1.45 };
+  return { root, parts: { body, legs, arms, head, mask, eyes, ...extra }, height: 1.45 };
 }
 
 // ---------------------------------------------------------------- TREASURE (spinning crown)
